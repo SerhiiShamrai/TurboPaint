@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useRef } from 'react';
+import { useEffect, useRef } from 'react';
 import * as THREE from 'three';
-import { OrbitControls } from 'three/addons/controls/OrbitControls';
+import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 
 /**
  * TurboPainter MVP - 3D сцена з кубом
@@ -28,47 +28,46 @@ function Scene({
   cubeColor = 0x888888,
   cubeSize = 1
 }: SceneProps) {
-  // Рефери на DOM елементи
+  // Рефери на DOM елементи та Three.js об'єкти
   const containerRef = useRef<HTMLDivElement>(null);
-
-  // Three.js об'єкти
-  let scene: THREE.Scene | null = null;
-  let camera: THREE.PerspectiveCamera | null = null;
-  let renderer: THREE.WebGLRenderer | null = null;
-  let controls: OrbitControls | null = null;
-  let cubeMesh: THREE.Mesh | null = null;
-
-  // State для масштабу (синхронізація з Sidebar)
-  const [scale, setScale] = useState(1);
+  const sceneRef = useRef<THREE.Scene | null>(null);
+  const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
+  const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
+  const controlsRef = useRef<OrbitControls | null>(null);
+  const cubeMeshRef = useRef<THREE.Mesh | null>(null);
 
   // Ініціалізація сцени
   useEffect(() => {
     if (!containerRef.current) return;
 
     // 1. Створення сцени
-    scene = new THREE.Scene();
+    const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x1a1a1a);
+    sceneRef.current = scene;
 
     // 2. Камера
-    camera = new THREE.PerspectiveCamera(
+    const camera = new THREE.PerspectiveCamera(
       75,
-      (containerRef.current.clientWidth / containerRef.current.clientHeight),
+      (containerRef.current!.clientWidth / containerRef.current!.clientHeight),
       0.1,
       1000
     );
     camera.position.set(3, 3, 3);
+    cameraRef.current = camera;
 
     // 3. Рендерер
-    renderer = new THREE.WebGLRenderer({ antialias: true });
-    renderer.setSize(containerRef.current.clientWidth, containerRef.current.clientHeight);
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(containerRef.current!.clientWidth, containerRef.current!.clientHeight);
     renderer.setPixelRatio(window.devicePixelRatio);
-    containerRef.current.appendChild(renderer.domElement);
+    containerRef.current!.appendChild(renderer.domElement);
+    rendererRef.current = renderer;
 
     // 4. OrbitControls (авто-обертання ВІМКНЕНЕ)
-    controls = new OrbitControls(camera, renderer.domElement as any);
+    const controls = new OrbitControls(camera, renderer.domElement as any);
     controls.autoRotate = false; // FIX: Авто-обертання вимкнено
     controls.enableDamping = true;
     controls.dampingFactor = 0.05;
+    controlsRef.current = controls;
 
     // 5. Освітлення (для StandardMaterial)
     const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
@@ -85,8 +84,9 @@ function Scene({
       roughness: 0.5,
       metalness: 0.1
     });
-    cubeMesh = new THREE.Mesh(geometry, material);
+    const cubeMesh = new THREE.Mesh(geometry, material);
     scene.add(cubeMesh);
+    cubeMeshRef.current = cubeMesh;
 
     // Анімаційний цикл
     function animate() {
@@ -103,14 +103,14 @@ function Scene({
 
     // 7. Обробка змін розміру вікна
     function onWindowResize() {
-      if (!containerRef.current || !camera || !renderer) return;
+      if (!containerRef.current || !cameraRef.current || !rendererRef.current) return;
 
       const width = containerRef.current.clientWidth;
       const height = containerRef.current.clientHeight;
 
-      camera.aspect = width / height;
-      camera.updateProjectionMatrix();
-      renderer.setSize(width, height);
+      cameraRef.current.aspect = width / height;
+      cameraRef.current.updateProjectionMatrix();
+      rendererRef.current.setSize(width, height);
     }
 
     window.addEventListener('resize', onWindowResize);
@@ -129,40 +129,36 @@ function Scene({
     }
 
     // Зберігаємо сцену в ref для доступу ззовні
-    (containerRef.current as any).__scene = scene;
-    (containerRef.current as any).__camera = camera;
-    (containerRef.current as any).__renderer = renderer;
+    (containerRef.current as any).__scene = sceneRef.current;
+    (containerRef.current as any).__camera = cameraRef.current;
+    (containerRef.current as any).__renderer = rendererRef.current;
+    (containerRef.current as any).__controls = controlsRef.current;
 
     return () => {
       window.removeEventListener('resize', onWindowResize);
       
       // Очищення
-      if (containerRef.current) {
-        containerRef.current.removeChild(renderer?.domElement);
+      if (rendererRef.current && rendererRef.current.domElement?.parentElement) {
+        rendererRef.current.domElement.parentElement.removeChild(rendererRef.current.domElement);
       }
     };
   }, []);
 
-  // FIX: Синхронізація кольору кубу з props
+  // Синхронізація кольору кубу з props
   useEffect(() => {
-    if (!cubeMesh || !scene) return;
+    if (!cubeMeshRef.current || !sceneRef.current) return;
 
-    (cubeMesh.material as any).color.set(cubeColor);
+    (cubeMeshRef.current.material as any).color.set(cubeColor);
   }, [cubeColor]);
 
-  // FIX: Синхронізація масштабу кубу з props (через setScale)
+  // Синхронізація розміру кубу з props
   useEffect(() => {
-    if (!cubeMesh) return;
+    if (!cubeMeshRef.current || !sceneRef.current) return;
 
-    setScale(cubeSize);
+    const geometry = new THREE.BoxGeometry(cubeSize, cubeSize, cubeSize);
+    cubeMeshRef.current.geometry.dispose();
+    cubeMeshRef.current.geometry = geometry;
   }, [cubeSize]);
-
-  // FIX: Застосування масштабу при зміні scale state
-  useEffect(() => {
-    if (!cubeMesh) return;
-
-    cubeMesh.scale.set(scale, scale, scale);
-  }, [scale]);
 
   return (
     <div ref={containerRef} className="flex-1 h-screen relative">
@@ -175,57 +171,13 @@ function Scene({
           <p className="text-gray-300 text-xs">{instruction}</p>
         </div>
 
-        {/* Налаштування кубу */}
-        <div className="space-y-3">
-          {/* Колір */}
-          <div>
-            <label className="text-gray-300 text-xs block mb-1">Колір:</label>
-            <input
-              type="color"
-              value={cubeColor.toString(16).padStart(6, '0')}
-              onChange={(e) => {
-                const color = parseInt(e.target.value, 16);
-                const materialColor = new THREE.Color(color);
-                (cubeMesh?.material as any).color.set(materialColor);
-              }}
-              className="w-full h-8 rounded cursor-pointer border border-gray-600"
-            />
+        {/* Інфо-панель */}
+        <div className="absolute bottom-4 left-4 bg-gray-800/90 backdrop-blur-sm rounded-lg p-3 shadow-lg border border-gray-700">
+          <div className="text-gray-400 text-xs space-y-1">
+            <p>• Three.js 0.170</p>
+            <p>• React + Vite</p>
+            <p>• TailwindCSS</p>
           </div>
-
-          {/* Розмір */}
-          <div>
-            <label className="text-gray-300 text-xs block mb-1">Розмір: {scale.toFixed(1)}</label>
-            <input
-              type="range"
-              min="0.5"
-              max="3"
-              step="0.1"
-              value={scale}
-              onChange={(e) => setScale(parseFloat(e.target.value))}
-              className="w-full accent-blue-500"
-            />
-          </div>
-
-          {/* Кнопка скидання */}
-          <button
-            onClick={() => {
-              setScale(1);
-                const neutralColor = new THREE.Color(0x888888);
-                (cubeMesh?.material as any).color.set(neutralColor);
-            }}
-            className="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded transition-colors w-full"
-          >
-            Скинути налаштування
-          </button>
-        </div>
-      </div>
-
-      {/* Інфо-панель */}
-      <div className="absolute bottom-4 left-4 bg-gray-800/90 backdrop-blur-sm rounded-lg p-3 shadow-lg border border-gray-700">
-        <div className="text-gray-400 text-xs space-y-1">
-          <p>• Three.js 0.170</p>
-          <p>• React + Vite</p>
-          <p>• TailwindCSS</p>
         </div>
       </div>
     </div>

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import React from 'react';
 
 /**
  * TurboPainter MVP - Бокова панель керування
@@ -12,21 +12,23 @@ import { useState } from 'react';
 interface SidebarProps {
   /** Заголовок панелі */
   title?: string;
+  /** Колір кубу (hex) */
+  cubeColor?: number;
+  /** Розмір кубу */
+  cubeSize?: number;
+  /** Callback при зміні кольору */
+  onColorChange?: (color: number) => void;
+  /** Callback при зміні розміру */
+  onSizeChange?: (size: number) => void;
 }
 
-function Sidebar({ title = 'Панель керування' }: SidebarProps) {
-  // Стан куба
-  const [cubeColor, setCubeColor] = useState(0x888888);
-  const [cubeSize, setCubeSize] = useState(1);
-
-  // Синхронізація з Scene через props (якщо потрібно)
-  const updateSceneColor = (color: number) => {
-    setCubeColor(color);
-  };
-
-  const updateSceneSize = (size: number) => {
-    setCubeSize(size);
-  };
+function Sidebar({ 
+  title = 'Панель керування', 
+  cubeColor = 0x888888,
+  cubeSize = 1,
+  onColorChange,
+  onSizeChange
+}: SidebarProps) {
 
   return (
     <div className="w-64 bg-gray-800 h-screen p-4 flex flex-col gap-4">
@@ -58,7 +60,10 @@ function Sidebar({ title = 'Панель керування' }: SidebarProps) {
           <input
             type="color"
             value={cubeColor.toString(16).padStart(6, '0')}
-            onChange={(e) => setCubeColor(parseInt(e.target.value, 16))}
+            onChange={(e) => {
+              const color = parseInt(e.target.value, 16);
+              onColorChange?.(color);
+            }}
             className="w-full h-8 rounded cursor-pointer"
           />
         </div>
@@ -72,7 +77,10 @@ function Sidebar({ title = 'Панель керування' }: SidebarProps) {
             max="3"
             step="0.1"
             value={cubeSize}
-            onChange={(e) => setCubeSize(parseFloat(e.target.value))}
+            onChange={(e) => {
+              const size = parseFloat(e.target.value);
+              onSizeChange?.(size);
+            }}
             className="w-full accent-blue-500"
           />
         </div>
@@ -91,8 +99,8 @@ function Sidebar({ title = 'Панель керування' }: SidebarProps) {
       {/* Кнопка рестарту */}
       <button
         onClick={() => {
-          setCubeColor(0x888888);
-          setCubeSize(1);
+          onColorChange?.(0x888888);
+          onSizeChange?.(1);
         }}
         className="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded transition-colors"
       >
