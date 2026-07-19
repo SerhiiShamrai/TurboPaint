@@ -93,12 +93,25 @@ function Scene({
     scene.add(cubeMesh);
     cubeMeshRef.current = cubeMesh;
 
+    // Відстеження попередньої позиції target
+    const prevTarget = controls.target.clone();
+
     // Анімаційний цикл
     function animate() {
       requestAnimationFrame(animate);
-      
-      controls?.update(); // Оновлення контролів (для damping)
-      
+
+      controls.update();
+
+      // Якщо target змістився (через панорамування) — рухаємо куб разом з ним,
+      // щоб куб завжди залишався точкою обертання камери
+      if (!controls.target.equals(prevTarget)) {
+        const delta = controls.target.clone().sub(prevTarget);
+        if (cubeMeshRef.current) {
+          cubeMeshRef.current.position.add(delta);
+        }
+        prevTarget.copy(controls.target);
+      }
+
       if (renderer && camera && scene) {
         renderer.render(scene, camera);
       }
