@@ -59,9 +59,9 @@ function Sidebar({
           <label className="text-gray-300 text-xs block mb-1">Колір:</label>
           <input
             type="color"
-            value={cubeColor.toString(16).padStart(6, '0')}
+            value={`#${cubeColor.toString(16).padStart(6, '0')}`}
             onChange={(e) => {
-              const color = parseInt(e.target.value, 16);
+              const color = parseInt(e.target.value.slice(1), 16);
               onColorChange?.(color);
             }}
             className="w-full h-8 rounded cursor-pointer"
