@@ -1,14 +1,14 @@
 import { useEffect, useRef } from 'react';
 import * as THREE from 'three';
-// --- Власний орбітальний контролер камери (замість OrbitControls) ---
 
 /**
  * TurboPainter MVP - 3D сцена з кубом
  * 
  * Функціонал:
- * - Орбітальні контролі (обертання, зум, переміщення)
+ * - Ліва кнопка миші — обертання камери навколо об'єкта
+ * - Права кнопка миші — панування (переміщення точки фокусу)
+ * - Колесо миші — зум
  * - Налаштування розміру та кольору кубу через props
- * - Авто-обертання вимкнено
  */
 
 interface SceneProps {
@@ -24,88 +24,139 @@ interface SceneProps {
 
 function Scene({ 
   title = '3D Сцена', 
-  instruction = 'Ліва кнопка — обертати, колесо — зумувати',
+  instruction = 'Ліва кнопка — обертати, права — переміщати, колесо — зум',
   cubeColor = 0x888888,
   cubeSize = 1
 }: SceneProps) {
-  // Рефери на DOM елементи та Three.js об'єкти
+  // Рефи на DOM елементи та Three.js об'єкти
   const containerRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
-  // --- Змінні для власного контролера камери ---
-  let radius = 6;
-  let theta = Math.PI / 4;
-  let phi = Math.PI / 3;
-  const panOffset = new THREE.Vector3(0, 0, 0);
+  const cubeMeshRef = useRef<THREE.Mesh | null>(null);
+
+  // --- Стан контролера камери (зберігається в useRef для збереження між рендерами) ---
+  const controllerState = useRef({
+    // Сферичні координати
+    radius: 6,
+    theta: Math.PI / 4,    // Кут обертання навколо осі Y (горизонтальне)
+    phi: Math.PI / 3,      // Кут обертання навколо осі X (вертикальне)
+    
+    // Точка фокусу (target) — камера завжди дивиться сюди
+    target: new THREE.Vector3(0, 0, 0),
+    
+    // Стан взаємодії
+    isRotating: false,   // Ліва кнопка — обертання навколо об'єкта
+    isPanning: false,    // Права кнопка — панування (зміщення точки фокусу)
+    
+    // Координати миші
+    lastX: 0,
+    lastY: 0,
+  });
+
+  // Обмеження
   const MIN_PHI = 0.1;
   const MAX_PHI = Math.PI - 0.1;
   const MIN_RADIUS = 2;
   const MAX_RADIUS = 20;
 
-  // Функція оновлення камери з орбітальної позиції
-  function updateCameraFromOrbit() {
-    const cam = cameraRef.current;
-    if (!cam) return;
-    const pivot = cubeMeshRef.current ? cubeMeshRef.current.position : new THREE.Vector3();
-    const x = radius * Math.sin(phi) * Math.sin(theta);
-    const y = radius * Math.cos(phi);
-    const z = radius * Math.sin(phi) * Math.cos(theta);
-    const lookAtPoint = pivot.clone().add(panOffset);
-    cam.position.set(lookAtPoint.x + x, lookAtPoint.y + y, lookAtPoint.z + z);
-    cam.lookAt(lookAtPoint);
-  }
-
-  // Події для контролера
-  let isRotating = false;
-  let isPanningNow = false;
-  let lastX = 0;
-  let lastY = 0;
+  // --- Обробники подій миші ---
 
   function onPointerDown(e: PointerEvent) {
-    if (e.button === 0) isRotating = true;
-    if (e.button === 2) isPanningNow = true;
-    lastX = e.clientX;
-    lastY = e.clientY;
+    const state = controllerState.current;
+    
+    if (e.button === 0) {     // Ліва кнопка — обертання навколо об'єкта
+      state.isRotating = true;
+    } else if (e.button === 2) { // Права кнопка — панування
+      state.isPanning = true;
+    }
+    
+    state.lastX = e.clientX;
+    state.lastY = e.clientY;
   }
+
   function onPointerUp() {
-    isRotating = false;
-    isPanningNow = false;
+    controllerState.current.isRotating = false;
+    controllerState.current.isPanning = false;
   }
+
   function onPointerMove(e: PointerEvent) {
-    const dx = e.clientX - lastX;
-    const dy = e.clientY - lastY;
-    lastX = e.clientX;
-    lastY = e.clientY;
+    const state = controllerState.current;
+    const cam = cameraRef.current;
+    if (!cam) return;
 
-    if (isRotating) {
-      theta -= dx * 0.005;
-      phi -= dy * 0.005;
-      phi = Math.max(MIN_PHI, Math.min(MAX_PHI, phi));
+    const dx = e.clientX - state.lastX;
+    const dy = e.clientY - state.lastY;
+    state.lastX = e.clientX;
+    state.lastY = e.clientY;
+
+    if (state.isRotating) {
+      // Ліва кнопка: обертання навколо об'єкта — оновлюємо кути
+      state.theta -= dx * 0.01;
+      state.phi -= dy * 0.01;
+      state.phi = Math.max(MIN_PHI, Math.min(MAX_PHI, state.phi));
     }
 
-    if (isPanningNow) {
-      const cam = cameraRef.current;
-      if (!cam) return;
-      const panSpeed = radius * 0.0015;
-      const right = new THREE.Vector3(1, 0, 0).applyQuaternion(cam.quaternion);
-      const up = new THREE.Vector3(0, 1, 0).applyQuaternion(cam.quaternion);
-      panOffset.addScaledVector(right, -dx * panSpeed);
-      panOffset.addScaledVector(up, dy * panSpeed);
+    if (state.isPanning) {
+      // Права кнопка: панування — зміщуємо точку фокусу (target)
+      // Це як у Substance Painter/Armor Painter: камера залишається на тій же відстані,
+      // але точка фокусу зміщується в площині, перпендикулярній до напрямку перегляду
+      
+      // Отримуємо напрямки "вправо" та "вгору" у світових координатах
+      const direction = new THREE.Vector3();
+      cam.getWorldDirection(direction);
+      
+      // Вектор "вправо" — добуток напрямку камери та вектора вгору
+      const right = new THREE.Vector3().crossVectors(direction, new THREE.Vector3(0, 1, 0)).normalize();
+      // Вектор "вгору" у площині камери
+      const up = new THREE.Vector3().crossVectors(right, direction).normalize();
+      
+      // Швидкість панування залежить від відстані камери
+      const panSpeed = state.radius * 0.002;
+      
+      // Зміщуємо точку фокусу
+      state.target.add(right.multiplyScalar(-dx * panSpeed));
+      state.target.add(up.multiplyScalar(dy * panSpeed));
     }
   }
+
   function onWheel(e: WheelEvent) {
     e.preventDefault();
-    radius += e.deltaY * 0.01;
-    radius = Math.max(MIN_RADIUS, Math.min(MAX_RADIUS, radius));
+    const state = controllerState.current;
+    
+    // Колесо миші: зум (зміна радіусу)
+    const zoomSensitivity = 0.005;
+    state.radius += e.deltaY * zoomSensitivity;
+    state.radius = Math.max(MIN_RADIUS, Math.min(MAX_RADIUS, state.radius));
   }
+
   function onContextMenu(e: MouseEvent) {
     e.preventDefault();
   }
 
-  const cubeMeshRef = useRef<THREE.Mesh | null>(null);
+  // --- Функція оновлення позиції камери ---
+  function updateCameraFromOrbit() {
+    const cam = cameraRef.current;
+    const state = controllerState.current;
+    if (!cam) return;
 
-  // Ініціалізація сцени
+    // Обчислюємо позицію камери за сферичними координатами відносно точки фокусу
+    const x = state.radius * Math.sin(state.phi) * Math.sin(state.theta);
+    const y = state.radius * Math.cos(state.phi);
+    const z = state.radius * Math.sin(state.phi) * Math.cos(state.theta);
+
+    // Позиція камери = точка фокусу + зміщення за сферичними координатами
+    cam.position.set(
+      state.target.x + x,
+      state.target.y + y,
+      state.target.z + z
+    );
+
+    // Камера завжди дивиться на точку фокусу
+    cam.lookAt(state.target);
+  }
+
+  // --- Ініціалізація сцени ---
   useEffect(() => {
     if (!containerRef.current) return;
 
@@ -117,33 +168,32 @@ function Scene({
     // 2. Камера
     const camera = new THREE.PerspectiveCamera(
       75,
-      (containerRef.current!.clientWidth / containerRef.current!.clientHeight),
+      containerRef.current.clientWidth / containerRef.current.clientHeight,
       0.1,
       1000
     );
-    camera.position.set(3, 3, 3);
     cameraRef.current = camera;
 
     // 3. Рендерер
     const renderer = new THREE.WebGLRenderer({ antialias: true });
-    renderer.setSize(containerRef.current!.clientWidth, containerRef.current!.clientHeight);
+    renderer.setSize(containerRef.current.clientWidth, containerRef.current.clientHeight);
     renderer.setPixelRatio(window.devicePixelRatio);
     renderer.domElement.style.position = 'absolute';
     renderer.domElement.style.inset = '0';
     renderer.domElement.style.width = '100%';
     renderer.domElement.style.height = '100%';
     renderer.domElement.style.display = 'block';
-    containerRef.current!.appendChild(renderer.domElement);
+    containerRef.current.appendChild(renderer.domElement);
     rendererRef.current = renderer;
 
-    // Підписка на події власного контролера
+    // Підписка на події контролера камери
     renderer.domElement.addEventListener('pointerdown', onPointerDown);
     window.addEventListener('pointerup', onPointerUp);
     window.addEventListener('pointermove', onPointerMove);
     renderer.domElement.addEventListener('wheel', onWheel, { passive: false });
     renderer.domElement.addEventListener('contextmenu', onContextMenu);
 
-    // 4. Створення куба (MeshStandardMaterial для реакції на світло)
+    // 4. Створення куба
     const geometry = new THREE.BoxGeometry(1, 1, 1);
     const material = new THREE.MeshStandardMaterial({ 
       color: cubeColor,
@@ -154,7 +204,7 @@ function Scene({
     scene.add(cubeMesh);
     cubeMeshRef.current = cubeMesh;
 
-    // 5. Освітлення (для StandardMaterial)
+    // 5. Освітлення
     const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
     scene.add(ambientLight);
 
@@ -162,22 +212,11 @@ function Scene({
     directionalLight.position.set(5, 10, 7);
     scene.add(directionalLight);
 
-    // Анімаційний цикл
+    // 6. Анімаційний цикл
     function animate() {
       requestAnimationFrame(animate);
-
-      // Оновлення камери з орбітальної позиції
       updateCameraFromOrbit();
-
-      if (cubeMeshRef.current) {
-        // Точка обертання завжди дорівнює позиції куба
-        const pivot = cubeMeshRef.current.position.clone();
-        camera.lookAt(pivot);
-      }
-
-      if (renderer && camera && scene) {
-        renderer.render(scene, camera);
-      }
+      renderer.render(scene, camera);
     }
 
     animate();
@@ -196,7 +235,7 @@ function Scene({
 
     window.addEventListener('resize', onWindowResize);
 
-    // 8. ResizeObserver для контейнера (якщо він змінює розмір)
+    // 8. ResizeObserver для контейнера
     const observer = new ResizeObserver((entries) => {
       for (const entry of entries) {
         const { width, height } = entry.contentRect;
@@ -210,23 +249,16 @@ function Scene({
       observer.observe(containerRef.current);
     }
 
-    // Зберігаємо сцену в ref для доступу ззовні
-    (containerRef.current as any).__scene = sceneRef.current;
-    (containerRef.current as any).__camera = cameraRef.current;
-    (containerRef.current as any).__renderer = rendererRef.current;
-
+    // Cleanup
     return () => {
-      // Видалення обробників подій власного контролера
       renderer.domElement.removeEventListener('pointerdown', onPointerDown);
       window.removeEventListener('pointerup', onPointerUp);
       window.removeEventListener('pointermove', onPointerMove);
       renderer.domElement.removeEventListener('wheel', onWheel);
       renderer.domElement.removeEventListener('contextmenu', onContextMenu);
-
       window.removeEventListener('resize', onWindowResize);
       observer.disconnect();
-      
-      // Очищення рендерера
+
       if (rendererRef.current && rendererRef.current.domElement?.parentElement) {
         rendererRef.current.domElement.parentElement.removeChild(rendererRef.current.domElement);
       }
@@ -235,22 +267,20 @@ function Scene({
 
   // Синхронізація кольору кубу з props
   useEffect(() => {
-    if (!cubeMeshRef.current || !sceneRef.current) return;
-
-    (cubeMeshRef.current.material as any).color.set(cubeColor);
+    if (!cubeMeshRef.current) return;
+    (cubeMeshRef.current.material as THREE.MeshStandardMaterial).color.set(cubeColor);
   }, [cubeColor]);
 
   // Синхронізація розміру кубу з props
   useEffect(() => {
-    if (!cubeMeshRef.current || !sceneRef.current) return;
-
+    if (!cubeMeshRef.current) return;
     const geometry = new THREE.BoxGeometry(cubeSize, cubeSize, cubeSize);
     cubeMeshRef.current.geometry.dispose();
     cubeMeshRef.current.geometry = geometry;
   }, [cubeSize]);
 
   return (
-<div ref={containerRef} className="absolute inset-0 w-full h-full">
+    <div ref={containerRef} className="absolute inset-0 w-full h-full">
       {/* Заголовок */}
       <div className="absolute top-4 left-4 bg-gray-800/90 backdrop-blur-sm rounded-lg p-4 shadow-lg border border-gray-700">
         <h1 className="text-white font-bold text-lg mb-2">{title}</h1>
