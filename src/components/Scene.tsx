@@ -6,7 +6,7 @@ import * as THREE from 'three';
  * 
  * Функціонал:
  * - Ліва кнопка миші — обертання камери навколо об'єкта
- * - Права кнопка миші — панування (переміщення точки фокусу)
+ * - Права кнопка миші — вільний огляд навколо об'єкта (трекбол-режим)
  * - Колесо миші — зум
  * - Налаштування розміру та кольору кубу через props
  */
@@ -24,7 +24,7 @@ interface SceneProps {
 
 function Scene({ 
   title = '3D Сцена', 
-  instruction = 'Ліва кнопка — обертати, права — переміщати, колесо — зум',
+  instruction = 'Ліва кнопка — обертати, права — вільний огляд навколо об'єкта, колесо — зум',
   cubeColor = 0x888888,
   cubeSize = 1
 }: SceneProps) {
@@ -42,12 +42,13 @@ function Scene({
     theta: Math.PI / 4,    // Кут обертання навколо осі Y (горизонтальне)
     phi: Math.PI / 3,      // Кут обертання навколо осі X (вертикальне)
     
-    // Точка фокусу (target) — камера завжди дивиться сюди
+    // Точка фокусу (target) — камера завжди дивиться сюди.
+    // Жорстке обмеження: target завжди дорівнює cubeMeshRef.current.position
     target: new THREE.Vector3(0, 0, 0),
     
     // Стан взаємодії
     isRotating: false,   // Ліва кнопка — обертання навколо об'єкта
-    isPanning: false,    // Права кнопка — панування (зміщення точки фокусу)
+    isPanning: false,    // Права кнопка — вільний огляд (трекбол-режим)
     
     // Координати миші
     lastX: 0,
@@ -67,7 +68,7 @@ function Scene({
     
     if (e.button === 0) {     // Ліва кнопка — обертання навколо об'єкта
       state.isRotating = true;
-    } else if (e.button === 2) { // Права кнопка — панування
+    } else if (e.button === 2) { // Права кнопка — вільний огляд
       state.isPanning = true;
     }
     
@@ -98,25 +99,13 @@ function Scene({
     }
 
     if (state.isPanning) {
-      // Права кнопка: панування — зміщуємо точку фокусу (target)
-      // Це як у Substance Painter/Armor Painter: камера залишається на тій же відстані,
-      // але точка фокусу зміщується в площині, перпендикулярній до напрямку перегляду
+      // Права кнопка: вільний огляд навколо об'єкта (трекбол-режим)
+      // Камера рухається так само як при обертанні, але з іншою чутливістю.
+      // Точка фокусу (target) НЕ зміщується — вона завжди зафіксована на об'єкті.
       
-      // Отримуємо напрямки "вправо" та "вгору" у світових координатах
-      const direction = new THREE.Vector3();
-      cam.getWorldDirection(direction);
-      
-      // Вектор "вправо" — добуток напрямку камери та вектора вгору
-      const right = new THREE.Vector3().crossVectors(direction, new THREE.Vector3(0, 1, 0)).normalize();
-      // Вектор "вгору" у площині камери
-      const up = new THREE.Vector3().crossVectors(right, direction).normalize();
-      
-      // Швидкість панування залежить від відстані камери
-      const panSpeed = state.radius * 0.002;
-      
-      // Зміщуємо точку фокусу
-      state.target.add(right.multiplyScalar(-dx * panSpeed));
-      state.target.add(up.multiplyScalar(dy * panSpeed));
+      state.theta -= dx * 0.015;
+      state.phi -= dy * 0.015;
+      state.phi = Math.max(MIN_PHI, Math.min(MAX_PHI, state.phi));
     }
   }
 
@@ -203,6 +192,9 @@ function Scene({
     const cubeMesh = new THREE.Mesh(geometry, material);
     scene.add(cubeMesh);
     cubeMeshRef.current = cubeMesh;
+
+    // Жорстке обмеження: target завжди дорівнює позиції куба
+    state.target.copy(cubeMeshRef.current!.position);
 
     // 5. Освітлення
     const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
@@ -302,5 +294,3 @@ function Scene({
     </div>
   );
 }
-
-export default Scene;
