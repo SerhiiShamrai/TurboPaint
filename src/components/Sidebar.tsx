@@ -1,5 +1,3 @@
-import React from 'react';
-
 /**
  * TurboPainter MVP - Бокова панель керування
  * 
