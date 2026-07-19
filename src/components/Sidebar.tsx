@@ -31,7 +31,7 @@ function Sidebar({
 }: SidebarProps) {
 
   return (
-    <div className="w-64 bg-gray-800 h-screen p-4 flex flex-col gap-4">
+<div className="w-64 bg-gray-800 h-full p-4 flex flex-col gap-4 overflow-y-auto">
       {/* Заголовок */}
       <div>
         <h2 className="text-xl font-bold text-white mb-2">{title}</h2>

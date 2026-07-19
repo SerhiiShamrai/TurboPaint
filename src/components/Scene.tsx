@@ -59,6 +59,11 @@ function Scene({
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setSize(containerRef.current!.clientWidth, containerRef.current!.clientHeight);
     renderer.setPixelRatio(window.devicePixelRatio);
+    renderer.domElement.style.position = 'absolute';
+    renderer.domElement.style.inset = '0';
+    renderer.domElement.style.width = '100%';
+    renderer.domElement.style.height = '100%';
+    renderer.domElement.style.display = 'block';
     containerRef.current!.appendChild(renderer.domElement);
     rendererRef.current = renderer;
 
@@ -116,15 +121,16 @@ function Scene({
     window.addEventListener('resize', onWindowResize);
 
     // 8. ResizeObserver для контейнера (якщо він змінює розмір)
-    if (containerRef.current) {
-      const observer = new ResizeObserver((entries) => {
-        for (const entry of entries) {
-          const { width, height } = entry.contentRect;
-          if (width > 0 && height > 0) {
-            onWindowResize();
-          }
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const { width, height } = entry.contentRect;
+        if (width > 0 && height > 0) {
+          onWindowResize();
         }
-      });
+      }
+    });
+
+    if (containerRef.current) {
       observer.observe(containerRef.current);
     }
 
@@ -136,6 +142,7 @@ function Scene({
 
     return () => {
       window.removeEventListener('resize', onWindowResize);
+      observer.disconnect();
       
       // Очищення
       if (rendererRef.current && rendererRef.current.domElement?.parentElement) {
@@ -161,7 +168,7 @@ function Scene({
   }, [cubeSize]);
 
   return (
-    <div ref={containerRef} className="flex-1 h-screen relative">
+<div ref={containerRef} className="absolute inset-0 w-full h-full">
       {/* Заголовок */}
       <div className="absolute top-4 left-4 bg-gray-800/90 backdrop-blur-sm rounded-lg p-4 shadow-lg border border-gray-700">
         <h1 className="text-white font-bold text-lg mb-2">{title}</h1>
