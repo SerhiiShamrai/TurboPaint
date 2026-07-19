@@ -93,27 +93,17 @@ function Scene({
     scene.add(cubeMesh);
     cubeMeshRef.current = cubeMesh;
 
-    // Відстеження стану панорамування
-    let isPanning = false;
-    const handlePointerDown = (e: PointerEvent) => {
-      if (e.button === 2) isPanning = true;
-    };
-    const handlePointerUp = (e: PointerEvent) => {
-      if (e.button === 2) isPanning = false;
-    };
-    renderer.domElement.addEventListener('pointerdown', handlePointerDown);
-    window.addEventListener('pointerup', handlePointerUp);
-
     // Анімаційний цикл
     function animate() {
       requestAnimationFrame(animate);
 
       controls.update();
 
-      // Коли права кнопка НЕ затиснута — плавно повертаємо точку обертання
-      // до куба, щоб наступне обертання завжди йшло навколо нього
-      if (!isPanning && cubeMeshRef.current) {
-        controls.target.lerp(cubeMeshRef.current.position, 0.1);
+      // Точка обертання ЗАВЖДИ дорівнює позиції куба — без винятків і без затримки.
+      // Права кнопка миші й далі рухає камеру (пан видно), але сам об'єкт
+      // залишається незмінною віссю обертання щокадру.
+      if (cubeMeshRef.current) {
+        controls.target.copy(cubeMeshRef.current.position);
       }
 
       if (renderer && camera && scene) {
@@ -160,12 +150,6 @@ function Scene({
     return () => {
       window.removeEventListener('resize', onWindowResize);
       observer.disconnect();
-      
-      // Видалення обробників подій панорамування
-      if (rendererRef.current?.domElement) {
-        rendererRef.current.domElement.removeEventListener('pointerdown', handlePointerDown);
-      }
-      window.removeEventListener('pointerup', handlePointerUp);
       
       // Очищення
       if (rendererRef.current && rendererRef.current.domElement?.parentElement) {
