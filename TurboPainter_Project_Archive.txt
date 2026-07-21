@@ -1,0 +1,386 @@
+# TurboPainter MVP - WebGL 3D Editor Project Archive
+
+## Опис проекту
+TurboPainter — це WebGL 3D редактор на основі React + Three.js, що дозволяє взаємодіяти з 3D об'єктами (куб) за допомогою миші:
+- Ліва кнопка — обертання камери навколо об'єкта
+- Права кнопка — панорама вигляду вбік
+- Колесо миші — зум
+
+---
+
+# package.json
+
+{
+  "name": "turbopainter",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "TurboPainter MVP - WebGL 3D Editor з Three.js",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "three": "^0.168.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@types/three": "^0.168.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.5.1",
+    "tailwindcss": "^3.4.17",
+    "typescript": "~5.6.2",
+    "vite": "^6.0.3"
+  }
+}
+
+---
+
+# index.html
+
+<!DOCTYPE html>
+<html lang="uk">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>TurboPainter MVP</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+
+---
+
+# tsconfig.json
+
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "useDefineForClassFields": true,
+    "lib": ["ES2020", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "skipLibCheck": true,
+
+    /* Bundler mode */
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "isolatedModules": true,
+    "moduleDetection": "force",
+    "noEmit": true,
+    "jsx": "react-jsx",
+
+    /* Linting */
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedSideEffectImports": true
+  },
+  "include": ["src"]
+}
+
+---
+
+# tailwind.config.js
+
+/** @type {import('tailwindcss').Config} */
+export default {
+  content: [
+    "./index.html",
+    "./src/**/*.{js,ts,jsx,tsx}",
+  ],
+  theme: {
+    extend: {},
+  },
+  plugins: [],
+}
+
+---
+
+# postcss.config.js
+
+export default {
+  plugins: {
+    tailwindcss: {},
+    autoprefixer: {},
+  },
+}
+
+---
+
+# .gitignore
+
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+---
+
+# src/vite-env.d.ts
+
+/// <reference types="vite/client" />
+
+---
+
+# src/index.css
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+---
+
+# src/main.tsx
+
+import './index.css';
+import React from 'react';
+import ReactDOM from 'react-dom/client';
+import App from './App';
+
+// Ініціалізація TailwindCSS через глобальну змінну для Vite
+declare global {
+  interface Window {
+    __REACT_DEVTOOLS_GLOBAL_HOOK__: any;
+  }
+}
+
+const root = ReactDOM.createRoot(document.getElementById('root') as HTMLElement);
+root.render(
+  <React.StrictMode>
+    <App />
+  </React.StrictMode>
+);
+
+---
+
+# src/App.tsx
+
+import { useState } from 'react';
+import Scene from './components/Scene';
+import Sidebar from './components/Sidebar';
+
+function App() {
+  const [cubeColor, setCubeColor] = useState(0x888888);
+  const [cubeSize, setCubeSize] = useState(1);
+
+  return (
+    <div className="h-screen w-screen bg-gray-900 flex overflow-hidden">
+      <Sidebar
+        cubeColor={cubeColor}
+        cubeSize={cubeSize}
+        onColorChange={setCubeColor}
+        onSizeChange={setCubeSize}
+        className="w-64 bg-gray-800 border-r border-gray-700 flex flex-col"
+      />
+      <Scene cubeColor={cubeColor} cubeSize={cubeSize} />
+    </div>
+  );
+}
+
+export default App;
+
+---
+
+# src/components/Sidebar.tsx
+
+import { useState } from 'react';
+
+interface SidebarProps {
+  cubeColor: number;
+  cubeSize: number;
+  onColorChange: (color: number) => void;
+  onSizeChange: (size: number) => void;
+  className?: string;
+}
+
+function Sidebar({
+  cubeColor,
+  cubeSize,
+  onColorChange,
+  onSizeChange,
+  className = '',
+}: SidebarProps) {
+  const [isDragging, setIsDragging] = useState(false);
+
+  return (
+    <div className={`flex flex-col gap-4 p-4 ${className}`}>
+      <div>
+        <label className="block text-sm font-medium text-gray-300 mb-2">
+          Кольор куба:
+        </label>
+        <input
+          type="color"
+          value={cubeColor}
+          onChange={(e) => onColorChange(parseInt(e.target.value, 16))}
+          className="w-full h-10 rounded cursor-pointer bg-gray-700 border border-gray-600"
+        />
+      </div>
+
+      <div>
+        <label className="block text-sm font-medium text-gray-300 mb-2">
+          Розмір куба: {cubeSize.toFixed(1)}
+        </label>
+        <input
+          type="range"
+          min="0.5"
+          max="3"
+          step="0.1"
+          value={cubeSize}
+          onChange={(e) => onSizeChange(parseFloat(e.target.value))}
+          className="w-full bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
+        />
+      </div>
+
+      <div className="mt-auto p-3 bg-gray-700 rounded text-sm text-gray-300">
+        <p className="font-medium mb-1">Інформація:</p>
+        <p>WebGL 3D редактор</p>
+        <p>Реактивний інтерфейс</p>
+      </div>
+    </div>
+  );
+}
+
+export default Sidebar;
+
+---
+
+# src/components/Scene.tsx
+
+import { useEffect, useRef } from 'react';
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+interface SceneProps {
+  cubeColor: number;
+  cubeSize: number;
+}
+
+function Scene({ cubeColor, cubeSize }: SceneProps) {
+  const mountRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!mountRef.current) return;
+
+    // Сцена та камера
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x1a1a2e);
+
+    const camera = new THREE.PerspectiveCamera(
+      75,
+      window.innerWidth / window.innerHeight,
+      0.1,
+      1000
+    );
+    camera.position.set(3, 2, 3);
+
+    // Рендерер
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(window.devicePixelRatio);
+    mountRef.current.appendChild(renderer.domElement);
+
+    // Контроли камери (OrbitControls)
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.05;
+
+    // Освітлення
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+    scene.add(ambientLight);
+
+    const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
+    directionalLight.position.set(5, 5, 5);
+    scene.add(directionalLight);
+
+    // Куб
+    const geometry = new THREE.BoxGeometry(cubeSize, cubeSize, cubeSize);
+    const material = new THREE.MeshStandardMaterial({
+      color: cubeColor,
+      roughness: 0.4,
+      metalness: 0.3,
+    });
+    const cube = new THREE.Mesh(geometry, material);
+    scene.add(cube);
+
+    // Анімація
+    function animate() {
+      requestAnimationFrame(animate);
+      controls.update();
+      renderer.render(scene, camera);
+    }
+    animate();
+
+    // Обробка змін розміру куба
+    const handleSizeChange = (newSize: number) => {
+      cube.geometry.dispose();
+      cube.geometry = new THREE.BoxGeometry(newSize, newSize, newSize);
+    };
+
+    // Обробка зміни кольору
+    const handleColorChange = (newColor: number) => {
+      cube.material.color.setHex(newColor);
+    };
+
+    // Обробка змін розміра вікна
+    const handleResize = () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    };
+
+    window.addEventListener('resize', handleResize);
+
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      if (mountRef.current && renderer.domElement) {
+        mountRef.current.removeChild(renderer.domElement);
+      }
+    };
+  }, [cubeColor, cubeSize]);
+
+  return <div ref={mountRef} className="flex-1" />;
+}
+
+export default Scene;

@@ -22,9 +22,9 @@ interface SceneProps {
   cubeSize?: number;
 }
 
-function Scene({ 
+  export function Scene({ 
   title = '3D Сцена', 
-  instruction = 'Ліва кнопка — обертати, права — вільний огляд навколо об'єкта, колесо — зум',
+   instruction = "Left mouse button — rotate camera, right mouse button — move cube, scroll wheel — zoom",
   cubeColor = 0x888888,
   cubeSize = 1
 }: SceneProps) {
@@ -45,6 +45,10 @@ function Scene({
     // Точка фокусу (target) — камера завжди дивиться сюди.
     // Жорстке обмеження: target завжди дорівнює cubeMeshRef.current.position
     target: new THREE.Vector3(0, 0, 0),
+    
+    // Вектор переміщення куба для панорамирования (права кнопка)
+    panMoveX: 0,
+    panMoveY: 0,
     
     // Стан взаємодії
     isRotating: false,   // Ліва кнопка — обертання навколо об'єкта
@@ -83,14 +87,12 @@ function Scene({
 
   function onPointerMove(e: PointerEvent) {
     const state = controllerState.current;
-    const cam = cameraRef.current;
-    if (!cam) return;
 
     const dx = e.clientX - state.lastX;
     const dy = e.clientY - state.lastY;
     state.lastX = e.clientX;
     state.lastY = e.clientY;
-
+ 
     if (state.isRotating) {
       // Ліва кнопка: обертання навколо об'єкта — оновлюємо кути
       state.theta -= dx * 0.01;
@@ -99,13 +101,18 @@ function Scene({
     }
 
     if (state.isPanning) {
-      // Права кнопка: вільний огляд навколо об'єкта (трекбол-режим)
-      // Камера рухається так само як при обертанні, але з іншою чутливістю.
-      // Точка фокусу (target) НЕ зміщується — вона завжди зафіксована на об'єкті.
-      
-      state.theta -= dx * 0.015;
-      state.phi -= dy * 0.015;
-      state.phi = Math.max(MIN_PHI, Math.min(MAX_PHI, state.phi));
+      // Права кнопка: переміщення куба відносно камери
+      // Отримуємо вектор напрямку камери для перетворення 2D руху в 3D
+      const cam = cameraRef.current;
+      if (cam && state.target) {
+        const direction = new THREE.Vector3();
+        cam.getWorldDirection(direction);
+        
+        // Переміщуємо куб у протилежний напряму від напрямку камери
+        // dx — горизонтальне переміщення, dy — вертикальне
+        state.panMoveX -= dx * 0.1;
+        state.panMoveY -= dy * 0.1;
+      }
     }
   }
 
@@ -134,14 +141,14 @@ function Scene({
     const y = state.radius * Math.cos(state.phi);
     const z = state.radius * Math.sin(state.phi) * Math.cos(state.theta);
 
-    // Позиція камери = точка фокусу + зміщення за сферичними координатами
+    // Позиція камери = точка фокусу + зміщення за сферичними координатами + пан-смещение
     cam.position.set(
       state.target.x + x,
       state.target.y + y,
       state.target.z + z
     );
 
-    // Камера завжди дивиться на точку фокусу
+    // Камера завжди дивиться на точку фокусу (позицію куба) без смещения
     cam.lookAt(state.target);
   }
 
@@ -194,7 +201,7 @@ function Scene({
     cubeMeshRef.current = cubeMesh;
 
     // Жорстке обмеження: target завжди дорівнює позиції куба
-    state.target.copy(cubeMeshRef.current!.position);
+    controllerState.current.target.copy(cubeMeshRef.current!.position);
 
     // 5. Освітлення
     const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
@@ -208,7 +215,23 @@ function Scene({
     function animate() {
       requestAnimationFrame(animate);
       updateCameraFromOrbit();
-      renderer.render(scene, camera);
+      
+      // Анімація переміщення куба при панорамировании
+      const state = controllerState.current;
+      const cube = cubeMeshRef.current;
+      if (cube && state.isPanning) {
+        cube.position.x += state.panMoveX * 0.1;
+        cube.position.y += state.panMoveY * 0.1;
+        
+        // Плавне затухання накопиченого вектора
+        state.panMoveX *= 0.9;
+        state.panMoveY *= 0.9;
+      }
+      
+      // Перевірка чи сцена ініціалізована перед рендерингом
+      if (sceneRef.current && cameraRef.current) {
+        renderer.render(sceneRef.current, cameraRef.current);
+      }
     }
 
     animate();
@@ -263,12 +286,18 @@ function Scene({
     (cubeMeshRef.current.material as THREE.MeshStandardMaterial).color.set(cubeColor);
   }, [cubeColor]);
 
-  // Синхронізація розміру кубу з props
+  // Синхронізація розміру кубу з props (Three.js R124+)
   useEffect(() => {
     if (!cubeMeshRef.current) return;
-    const geometry = new THREE.BoxGeometry(cubeSize, cubeSize, cubeSize);
+    
+    const material = cubeMeshRef.current.material as THREE.MeshStandardMaterial;
     cubeMeshRef.current.geometry.dispose();
-    cubeMeshRef.current.geometry = geometry;
+    
+    const newGeometry = new THREE.BoxGeometry(cubeSize, cubeSize, cubeSize);
+    cubeMeshRef.current.geometry = newGeometry;
+    
+    // Зберігаємо матеріал для подальшого використання
+    material.color.set(cubeColor);
   }, [cubeSize]);
 
   return (

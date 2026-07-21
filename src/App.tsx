@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import Scene from './components/Scene';
+import { Scene } from './components/Scene';
 import Sidebar from './components/Sidebar';
 
 function App() {
