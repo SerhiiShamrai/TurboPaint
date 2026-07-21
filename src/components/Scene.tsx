@@ -20,13 +20,16 @@ interface SceneProps {
   cubeColor?: number;
   /** Розмір кубу */
   cubeSize?: number;
+  /** Текст інструкції з модифікаторами (опціонально) */
+  modifierInstruction?: string;
 }
 
   export function Scene({ 
   title = '3D Сцена', 
    instruction = "Left mouse button — rotate camera, right mouse button — move cube, scroll wheel — zoom",
   cubeColor = 0x888888,
-  cubeSize = 1
+  cubeSize = 1,
+  modifierInstruction = "Middle mouse or Alt+LMB — pan, Left mouse — rotate"
 }: SceneProps) {
   // Рефи на DOM елементи та Three.js об'єкти
   const containerRef = useRef<HTMLDivElement>(null);
