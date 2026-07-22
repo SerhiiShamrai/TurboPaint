@@ -100,17 +100,22 @@ export function Scene({
     }
 
     if (state.isPanning) {
-      // Права кнопка: переміщення камери, не куба
+      // Права кнопка: панорамування — рухаємо камеру і target разом по локальних осях камери
       const cam = cameraRef.current;
-      if (cam && state.target) {
-        // Переміщуємо камеру у світових координатах
-        cam.position.x += dx * 0.05;
-        cam.position.y += dy * 0.05;
-        
-        // Обмеження руху камери для запобігання виходу за межі
-        const maxPan = 10;
-        cam.position.x = Math.max(-maxPan, Math.min(maxPan, cam.position.x));
-        cam.position.y = Math.max(-maxPan, Math.min(maxPan, cam.position.y));
+      if (cam) {
+        const right = new THREE.Vector3();
+        const up = new THREE.Vector3();
+        cam.matrixWorld.extractBasis(right, up, new THREE.Vector3());
+
+        const panSpeed = 0.003 * state.radius; // масштаб з відстанню, як у ArmorPaint
+
+        const panDelta = new THREE.Vector3()
+          .addScaledVector(right, -dx * panSpeed)
+          .addScaledVector(up, dy * panSpeed);
+
+        cam.position.add(panDelta);
+        state.target.add(panDelta); // критично: зсуваємо і target, інакше snap-back
+        cam.lookAt(state.target);
       }
     }
 
@@ -210,6 +215,9 @@ export function Scene({
 
     // Жорстке обмеження: target завжди дорівнює позиції куба
     controllerState.current.target.copy(cubeMeshRef.current!.position);
+    
+    // Виставити коректну позицію камери одразу, до першої взаємодії
+    updateCameraFromOrbit();
 
     // 5. Освітлення
     const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
@@ -223,12 +231,8 @@ export function Scene({
     function animate() {
       requestAnimationFrame(animate);
       
-      // Only update orbit position when rotating (left click)
-      if (controllerState.current.isRotating) {
-        updateCameraFromOrbit();
-      }
+      updateCameraFromOrbit(); // викликати щокадру безумовно
       
-      // Перевірка чи сцена ініціалізована перед рендерингом
       if (sceneRef.current && cameraRef.current) {
         renderer.render(sceneRef.current, cameraRef.current);
       }
