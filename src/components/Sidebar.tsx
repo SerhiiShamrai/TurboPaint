@@ -20,6 +20,8 @@ interface SidebarProps {
   onSizeChange?: (size: number) => void;
   /** Callback для завантаження моделі */
   onLoadModel?: (file: File) => void;
+  /** Callback для завантаження текстури на канал матеріалу */
+  onLoadTexture?: (channel: 'map' | 'roughnessMap' | 'metalnessMap' | 'normalMap' | 'emissiveMap', file: File) => void;
 }
 
 function Sidebar({ 
@@ -28,7 +30,8 @@ function Sidebar({
   cubeSize = 1,
   onColorChange,
   onSizeChange,
-  onLoadModel
+  onLoadModel,
+  onLoadTexture
 }: SidebarProps) {
 
   return (
@@ -120,6 +123,131 @@ function Sidebar({
         >
           Load Model
         </label>
+      </div>
+
+      {/* Секція матеріалів */}
+      <div className="bg-gray-700 rounded-lg p-3">
+        <h3 className="text-white font-semibold mb-2 text-sm">Матеріали:</h3>
+        
+        {/* Albedo (map) */}
+        <div className="mb-2">
+          <label className="text-gray-300 text-xs block mb-1">Albedo (map):</label>
+          <input
+            type="file"
+            accept=".png,.jpg,.jpeg,.webp"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file && onLoadTexture) {
+                onLoadTexture('map', file);
+                e.target.value = '';
+              }
+            }}
+            className="hidden"
+            id="albedo-file-input"
+          />
+          <label
+            htmlFor="albedo-file-input"
+            className="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-1 px-3 rounded cursor-pointer transition-colors inline-block text-xs"
+          >
+            Завантажити Albedo
+          </label>
+        </div>
+
+        {/* Roughness */}
+        <div className="mb-2">
+          <label className="text-gray-300 text-xs block mb-1">Roughness:</label>
+          <input
+            type="file"
+            accept=".png,.jpg,.jpeg,.webp"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file && onLoadTexture) {
+                onLoadTexture('roughnessMap', file);
+                e.target.value = '';
+              }
+            }}
+            className="hidden"
+            id="roughness-file-input"
+          />
+          <label
+            htmlFor="roughness-file-input"
+            className="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-1 px-3 rounded cursor-pointer transition-colors inline-block text-xs"
+          >
+            Завантажити Roughness
+          </label>
+        </div>
+
+        {/* Metalness */}
+        <div className="mb-2">
+          <label className="text-gray-300 text-xs block mb-1">Metalness:</label>
+          <input
+            type="file"
+            accept=".png,.jpg,.jpeg,.webp"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file && onLoadTexture) {
+                onLoadTexture('metalnessMap', file);
+                e.target.value = '';
+              }
+            }}
+            className="hidden"
+            id="metalness-file-input"
+          />
+          <label
+            htmlFor="metalness-file-input"
+            className="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-1 px-3 rounded cursor-pointer transition-colors inline-block text-xs"
+          >
+            Завантажити Metalness
+          </label>
+        </div>
+
+        {/* Normal */}
+        <div className="mb-2">
+          <label className="text-gray-300 text-xs block mb-1">Normal:</label>
+          <input
+            type="file"
+            accept=".png,.jpg,.jpeg,.webp"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file && onLoadTexture) {
+                onLoadTexture('normalMap', file);
+                e.target.value = '';
+              }
+            }}
+            className="hidden"
+            id="normal-file-input"
+          />
+          <label
+            htmlFor="normal-file-input"
+            className="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-1 px-3 rounded cursor-pointer transition-colors inline-block text-xs"
+          >
+            Завантажити Normal
+          </label>
+        </div>
+
+        {/* Emission */}
+        <div className="mb-2">
+          <label className="text-gray-300 text-xs block mb-1">Emission:</label>
+          <input
+            type="file"
+            accept=".png,.jpg,.jpeg,.webp"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file && onLoadTexture) {
+                onLoadTexture('emissiveMap', file);
+                e.target.value = '';
+              }
+            }}
+            className="hidden"
+            id="emission-file-input"
+          />
+          <label
+            htmlFor="emission-file-input"
+            className="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-1 px-3 rounded cursor-pointer transition-colors inline-block text-xs"
+          >
+            Завантажити Emission
+          </label>
+        </div>
       </div>
 
       {/* Кнопка рестарту */}

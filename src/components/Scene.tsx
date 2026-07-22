@@ -40,8 +40,11 @@ function findFirstMesh(root: THREE.Object3D): THREE.Mesh | null {
   return result;
 }
 
+type MaterialChannel = 'map' | 'roughnessMap' | 'metalnessMap' | 'normalMap' | 'emissiveMap';
+
 interface SceneRef {
   loadModelFromFile: (file: File) => void;
+  applyTextureToChannel: (channel: MaterialChannel, file: File) => void;
 }
 
 export const Scene = forwardRef<SceneRef, SceneProps>(
@@ -150,7 +153,7 @@ export const Scene = forwardRef<SceneRef, SceneProps>(
       const state = controllerState.current;
       
       // Колесо миші: зум (зміна радіусу)
-      const zoomSensitivity = 0.005;
+      const zoomSensitivity = 0.002;
       state.radius += e.deltaY * zoomSensitivity;
       state.radius = Math.max(state.minRadius, Math.min(state.maxRadius, state.radius));
     }
@@ -184,6 +187,43 @@ export const Scene = forwardRef<SceneRef, SceneProps>(
 
       // Камера завжди дивиться на точку фокусу (позицію куба) без смещения
       cam.lookAt(state.target);
+    }
+
+    // Функція застосування текстури до каналу матеріалу
+    function applyTextureToChannel(channel: MaterialChannel, file: File) {
+      if (!currentModelRef.current) return;
+
+      const url = URL.createObjectURL(file);
+      const loader = new THREE.TextureLoader();
+
+      loader.load(url, (texture) => {
+        texture.flipY = false; // узгодити з конвенцією glTF
+        texture.colorSpace = (channel === 'map' || channel === 'emissiveMap')
+          ? THREE.SRGBColorSpace
+          : THREE.NoColorSpace;
+        texture.wrapS = THREE.RepeatWrapping;
+        texture.wrapT = THREE.RepeatWrapping;
+
+        currentModelRef.current!.traverse((child: any) => {
+          if (!child.isMesh) return;
+          const materials = Array.isArray(child.material) ? child.material : [child.material];
+
+          materials.forEach((mat: THREE.MeshStandardMaterial) => {
+            const oldTexture = mat[channel];
+            if (oldTexture) oldTexture.dispose(); // звільняємо стару текстуру
+
+            mat[channel] = texture;
+
+            if (channel === 'emissiveMap') {
+              mat.emissive.set(0xffffff); // інакше emissiveMap не буде видно
+            }
+
+            mat.needsUpdate = true;
+          });
+        });
+
+        URL.revokeObjectURL(url);
+      });
     }
 
     // Функція завантаження моделі з файлу
@@ -402,7 +442,10 @@ export const Scene = forwardRef<SceneRef, SceneProps>(
       }
     }, [cubeSize]);
 
-    useImperativeHandle(ref, () => ({ loadModelFromFile }));
+    useImperativeHandle(ref, () => ({ 
+      loadModelFromFile,
+      applyTextureToChannel
+    }));
 
     // --- Return JSX ---
     return (
