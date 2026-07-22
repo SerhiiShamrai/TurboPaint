@@ -18,6 +18,8 @@ interface SidebarProps {
   onColorChange?: (color: number) => void;
   /** Callback при зміні розміру */
   onSizeChange?: (size: number) => void;
+  /** Callback для завантаження моделі */
+  onLoadModel?: (file: File) => void;
 }
 
 function Sidebar({ 
@@ -25,7 +27,8 @@ function Sidebar({
   cubeColor = 0x888888,
   cubeSize = 1,
   onColorChange,
-  onSizeChange
+  onSizeChange,
+  onLoadModel
 }: SidebarProps) {
 
   return (
@@ -92,6 +95,31 @@ function Sidebar({
           <p>• React + Vite</p>
           <p>• TailwindCSS</p>
         </div>
+      </div>
+
+      {/* Кнопка завантаження моделі */}
+      <div className="bg-gray-700 rounded-lg p-3">
+        <h3 className="text-white font-semibold mb-2 text-sm">Завантажити модель:</h3>
+        <input
+          type="file"
+          accept=".glb,.gltf"
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            if (file && onLoadModel) {
+              onLoadModel(file);
+              // Скинути input, щоб можна було завантажити той самий файл знову
+              e.target.value = '';
+            }
+          }}
+          className="hidden"
+          id="model-file-input"
+        />
+        <label
+          htmlFor="model-file-input"
+          className="bg-green-600 hover:bg-green-700 text-white font-semibold py-2 px-4 rounded cursor-pointer transition-colors inline-block"
+        >
+          Load Model
+        </label>
       </div>
 
       {/* Кнопка рестарту */}

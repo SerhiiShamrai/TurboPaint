@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import * as THREE from 'three';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 
 /**
  * TurboPainter MVP - 3D сцена з кубом
@@ -22,21 +23,24 @@ interface SceneProps {
   cubeSize?: number;
   /** Текст інструкції з модифікаторами (опціонально) */
   modifierInstruction?: string;
+  /** Callback для завантаження моделі */
+  onModelLoad?: (file: File) => void;
 }
 
 export function Scene({ 
   title = '3D Сцена', 
-   instruction = "Left mouse button — rotate camera, right mouse button — pan view, scroll wheel — zoom", // Updated instruction to reflect new behavior
+  instruction = "Left mouse button — rotate camera, right mouse button — pan view, scroll wheel — zoom",
   cubeColor = 0x888888,
   cubeSize = 1,
-  modifierInstruction = "Middle mouse or Alt+LMB — pan, Left mouse — rotate"
+  modifierInstruction = "Middle mouse or Alt+LMB — pan, Left mouse — rotate",
+  onModelLoad
 }: SceneProps) {
   // Рефи на DOM елементи та Three.js об'єкти
   const containerRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
-  const cubeMeshRef = useRef<THREE.Mesh | null>(null);
+const currentModelRef = useRef<THREE.Object3D | null>(null);
 
   // --- Стан контролера камери (зберігається в useRef для збереження між рендерами) ---
   const controllerState = useRef({
@@ -46,7 +50,6 @@ export function Scene({
     phi: Math.PI / 3,      // Кут обертання навколо осі X (вертикальне)
     
     // Точка фокусу (target) — камера завжди дивиться сюди.
-    // Жорстке обмеження: target завжди дорівнює cubeMeshRef.current.position
     target: new THREE.Vector3(0, 0, 0),
     
     // Останні координати курсора для розрахунку дельти
@@ -165,6 +168,60 @@ export function Scene({
     cam.lookAt(state.target);
   }
 
+  // Функція завантаження моделі з файлу
+  function loadModelFromFile(file: File) {
+    const reader = new FileReader();
+    
+    reader.onload = (e) => {
+      const arrayBuffer = e.target?.result as ArrayBuffer;
+      if (!arrayBuffer) return;
+      
+      new GLTFLoader().parse(arrayBuffer, '', (gltf) => {
+        const gltfScene = gltf.scene;
+        
+        // а) Якщо існує поточна модель — прибрати зі сцени та вивільнити пам'ять
+        if (currentModelRef.current) {
+          sceneRef.current?.remove(currentModelRef.current);
+          
+          // Вивільняємо геометрію та матеріали кожного меша всередині
+          gltfScene.traverse((child: any) => {
+            if (child.isMesh) {
+              child.geometry.dispose();
+              child.material.dispose();
+            }
+          });
+        }
+        
+        // б) Додаємо нову модель у сцену
+        sceneRef.current?.add(gltfScene);
+        currentModelRef.current = gltfScene;
+        
+        // в) Обчислюємо центр та розмір моделі
+        const box = new THREE.Box3().setFromObject(gltfScene);
+        const center = new THREE.Vector3();
+        const size = new THREE.Vector3();
+        box.getCenter(center);
+        box.getSize(size);
+        
+        // г) Виставляємо target на центр моделі
+        controllerState.current.target.copy(center);
+        
+        // д) Виставляємо радіус камери (макс розмір * 2)
+        controllerState.current.radius = Math.max(size.x, size.y, size.z) * 2;
+        
+        // е) Оновлюємо камеру одразу після зміни
+        updateCameraFromOrbit();
+        
+        // Повідомляємо батька про завантаження моделі
+        onModelLoad?.(file);
+      }, (err) => {
+        console.error('Error loading GLTF model:', err);
+      });
+    };
+    
+    reader.readAsArrayBuffer(file);
+  }
+
   // --- Ініціалізація сцени ---
   useEffect(() => {
     if (!containerRef.current) return;
@@ -202,7 +259,7 @@ export function Scene({
     renderer.domElement.addEventListener('wheel', onWheel, { passive: false });
     renderer.domElement.addEventListener('contextmenu', onContextMenu);
 
-    // 4. Створення куба
+    // 4. Створення початкового куба (перша модель)
     const geometry = new THREE.BoxGeometry(1, 1, 1);
     const material = new THREE.MeshStandardMaterial({ 
       color: cubeColor,
@@ -211,10 +268,12 @@ export function Scene({
     });
     const cubeMesh = new THREE.Mesh(geometry, material);
     scene.add(cubeMesh);
-    cubeMeshRef.current = cubeMesh;
+    currentModelRef.current = cubeMesh;
 
-    // Жорстке обмеження: target завжди дорівнює позиції куба
-    controllerState.current.target.copy(cubeMeshRef.current!.position);
+    // Жорстке обмеження: target завжди дорівнює позиції першої моделі
+    if (currentModelRef.current) {
+      controllerState.current.target.copy(currentModelRef.current.position);
+    }
     
     // Виставити коректну позицію камери одразу, до першої взаємодії
     updateCameraFromOrbit();
@@ -284,24 +343,45 @@ export function Scene({
     };
   }, []);
 
-  // Синхронізація кольору кубу з props
+  // Синхронізація кольору моделі з props
   useEffect(() => {
-    if (!cubeMeshRef.current) return;
-    (cubeMeshRef.current.material as THREE.MeshStandardMaterial).color.set(cubeColor);
+    if (!currentModelRef.current) return;
+    
+    // Знаходимо перший mesh у сцені для зміни кольору
+    let firstMesh: THREE.Mesh | null = null;
+    currentModelRef.current.traverse((child: any) => {
+      if (child.isMesh && !firstMesh) {
+        firstMesh = child;
+      }
+    });
+    
+    if (firstMesh) {
+      (firstMesh.material as THREE.MeshStandardMaterial).color.set(cubeColor);
+    }
   }, [cubeColor]);
 
-  // Синхронізація розміру кубу з props (Three.js R124+)
+  // Синхронізація розміру моделі з props (Three.js R124+)
   useEffect(() => {
-    if (!cubeMeshRef.current) return;
+    if (!currentModelRef.current) return;
     
-    const material = cubeMeshRef.current.material as THREE.MeshStandardMaterial;
-    cubeMeshRef.current.geometry.dispose();
+    // Знаходимо перший mesh у сцені для зміни геометрії
+    let firstMesh: THREE.Mesh | null = null;
+    currentModelRef.current.traverse((child: any) => {
+      if (child.isMesh && !firstMesh) {
+        firstMesh = child;
+      }
+    });
     
-    const newGeometry = new THREE.BoxGeometry(cubeSize, cubeSize, cubeSize);
-    cubeMeshRef.current.geometry = newGeometry;
-    
-    // Зберігаємо матеріал для подальшого використання
-    material.color.set(cubeColor);
+    if (firstMesh) {
+      const material = firstMesh.material as THREE.MeshStandardMaterial;
+      firstMesh.geometry.dispose();
+      
+      const newGeometry = new THREE.BoxGeometry(cubeSize, cubeSize, cubeSize);
+      firstMesh.geometry = newGeometry;
+      
+      // Зберігаємо матеріал для подальшого використання
+      material.color.set(cubeColor);
+    }
   }, [cubeSize]);
 
   return (
