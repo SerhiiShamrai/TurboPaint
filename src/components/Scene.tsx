@@ -27,6 +27,19 @@ interface SceneProps {
   onModelLoad?: (file: File) => void;
 }
 
+/**
+ * Знаходить перший меш у дереві об'єктів Three.js
+ */
+function findFirstMesh(root: THREE.Object3D): THREE.Mesh | null {
+  let result: THREE.Mesh | null = null;
+  root.traverse((child) => {
+    if (!result && (child as THREE.Mesh).isMesh) {
+      result = child as THREE.Mesh;
+    }
+  });
+  return result;
+}
+
 interface SceneRef {
   loadModelFromFile: (file: File) => void;
 }
@@ -46,6 +59,7 @@ export const Scene = forwardRef<SceneRef, SceneProps>(
     const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
     const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
     const currentModelRef = useRef<THREE.Object3D | null>(null);
+    const isCustomModelRef = useRef<boolean>(false);
 
     // --- Стан контролера камери (зберігається в useRef для збереження між рендерами) ---
     const controllerState = useRef({
@@ -353,18 +367,10 @@ export const Scene = forwardRef<SceneRef, SceneProps>(
       };
     }, []);
 
-    // Синхронізація кольору моделі з props
+    // Синхронізація кольору
     useEffect(() => {
-      if (!currentModelRef.current) return;
-      
-      // Знаходимо перший mesh у сцені для зміни кольору
-      let firstMesh: THREE.Mesh | null = null;
-      currentModelRef.current.traverse((child: any) => {
-        if (child.isMesh && !firstMesh) {
-          firstMesh = child;
-        }
-      });
-      
+      if (!currentModelRef.current || isCustomModelRef.current) return;
+      const firstMesh = findFirstMesh(currentModelRef.current);
       if (firstMesh) {
         const meshMaterial = firstMesh.material as THREE.MeshStandardMaterial | THREE.MeshStandardMaterial[];
         if (Array.isArray(meshMaterial)) {
@@ -377,36 +383,14 @@ export const Scene = forwardRef<SceneRef, SceneProps>(
       }
     }, [cubeColor]);
 
-    // Синхронізація розміру моделі з props (Three.js R124+)
+    // Синхронізація розміру
     useEffect(() => {
-      if (!currentModelRef.current) return;
-      
-      // Знаходимо перший mesh у сцені для зміни геометрії
-      let firstMesh: THREE.Mesh<any, any> | null = null;
-      currentModelRef.current.traverse((child: any) => {
-        if (child.isMesh && !firstMesh) {
-          firstMesh = child;
-        }
-      });
-      
-      // Type assertion для обходу TypeScript обмежень при traversing
+      if (!currentModelRef.current || isCustomModelRef.current) return;
+      const firstMesh = findFirstMesh(currentModelRef.current);
       if (firstMesh) {
-        const mesh = firstMesh as THREE.Mesh<THREE.BoxGeometry, THREE.MeshStandardMaterial>;
-        
-        // У Three.js Mesh завжди має властивість material — це частина типу
-        const material = mesh.material;
-        
-        // Матеріал може бути масивом або об'єктом
-        if (Array.isArray(material)) {
-          material[0].color.set(cubeColor);
-        } else {
-          material.color.set(cubeColor);
-        }
-        
-        // Оновлюємо геометрію
-        mesh.geometry.dispose();
-        const newGeometry = new THREE.BoxGeometry(cubeSize, cubeSize, cubeSize);
-        mesh.geometry = newGeometry;
+        firstMesh.geometry.dispose();
+        firstMesh.geometry = new THREE.BoxGeometry(cubeSize, cubeSize, cubeSize);
+        (firstMesh.material as THREE.MeshStandardMaterial).color.set(cubeColor);
       }
     }, [cubeSize]);
 
@@ -415,15 +399,18 @@ export const Scene = forwardRef<SceneRef, SceneProps>(
     // --- Return JSX ---
     return (
       <div ref={containerRef} className="absolute inset-0 w-full h-full">
-        <div className="absolute top-4 left-4 bg-gray-800/90 backdrop-blur-sm rounded-lg p-4 shadow-lg border border-gray-700">
-          <h1 className="text-white font-bold text-lg mb-2">{title}</h1>
-          
-          {/* Інструкція */}
-          <div className="bg-gray-700/80 rounded p-3 mb-4">
-            <p className="text-gray-300 text-xs">{instruction}</p>
-          </div>
+       <div className="absolute top-4 left-4 bg-gray-800/90 backdrop-blur-sm rounded-lg p-4 shadow-lg border border-gray-700">
+           <h1 className="text-white font-bold text-lg mb-2">{title}</h1>
+           
+           {/* Інструкція */}
+           <div className="bg-gray-700/80 rounded p-3 mb-4">
+             <p className="text-gray-300 text-xs">{instruction}</p>
+             {modifierInstruction && (
+               <p className="text-blue-300 text-xs mt-2">{modifierInstruction}</p>
+             )}
+           </div>
 
-          {/* Інфо-панель */}
+           {/* Інфо-панель */}
           <div className="absolute bottom-4 left-4 bg-gray-800/90 backdrop-blur-sm rounded-lg p-3 shadow-lg border border-gray-700">
             <div className="text-gray-400 text-xs space-y-1">
               <p>• Three.js 0.170</p>
