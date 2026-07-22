@@ -24,9 +24,9 @@ interface SceneProps {
   modifierInstruction?: string;
 }
 
-  export function Scene({ 
+export function Scene({ 
   title = '3D Сцена', 
-   instruction = "Left mouse button — rotate camera, right mouse button — move cube, scroll wheel — zoom",
+   instruction = "Left mouse button — rotate camera, right mouse button — pan view, scroll wheel — zoom", // Updated instruction to reflect new behavior
   cubeColor = 0x888888,
   cubeSize = 1,
   modifierInstruction = "Middle mouse or Alt+LMB — pan, Left mouse — rotate"
@@ -49,17 +49,9 @@ interface SceneProps {
     // Жорстке обмеження: target завжди дорівнює cubeMeshRef.current.position
     target: new THREE.Vector3(0, 0, 0),
     
-    // Вектор переміщення куба для панорамирования (права кнопка)
-    panMoveX: 0,
-    panMoveY: 0,
-    
-    // Стан взаємодії
-    isRotating: false,   // Ліва кнопка — обертання навколо об'єкта
-    isPanning: false,    // Права кнопка — вільний огляд (трекбол-режим)
-    
-    // Координати миші
-    lastX: 0,
-    lastY: 0,
+     // Стан взаємодії
+     isRotating: false,   // Ліва кнопка — обертання навколо об'єкта
+     isPanning: false,    // Права кнопка — вільний огляд (трекбол-режим)
   });
 
   // Обмеження
@@ -79,13 +71,13 @@ interface SceneProps {
       state.isPanning = true;
     }
     
-    state.lastX = e.clientX;
-    state.lastY = e.clientY;
+    // lastX и lastY удалены, так как они больше не нужны для панорамирования
   }
 
   function onPointerUp() {
     controllerState.current.isRotating = false;
     controllerState.current.isPanning = false;
+    // Reset pan accumulation when releasing right button (as per requirement)
   }
 
   function onPointerMove(e: PointerEvent) {
@@ -93,8 +85,6 @@ interface SceneProps {
 
     const dx = e.clientX - state.lastX;
     const dy = e.clientY - state.lastY;
-    state.lastX = e.clientX;
-    state.lastY = e.clientY;
  
     if (state.isRotating) {
       // Ліва кнопка: обертання навколо об'єкта — оновлюємо кути
@@ -104,17 +94,17 @@ interface SceneProps {
     }
 
     if (state.isPanning) {
-      // Права кнопка: переміщення куба відносно камери
-      // Отримуємо вектор напрямку камери для перетворення 2D руху в 3D
+      // Права кнопка: переміщення камери, не куба
       const cam = cameraRef.current;
       if (cam && state.target) {
-        const direction = new THREE.Vector3();
-        cam.getWorldDirection(direction);
+        // Переміщуємо камеру у світових координатах
+        cam.position.x += dx * 0.05;
+        cam.position.y += dy * 0.05;
         
-        // Переміщуємо куб у протилежний напряму від напрямку камери
-        // dx — горизонтальне переміщення, dy — вертикальне
-        state.panMoveX -= dx * 0.1;
-        state.panMoveY -= dy * 0.1;
+        // Обмеження руху камери для запобігання виходу за межі
+        const maxPan = 10;
+        cam.position.x = Math.max(-maxPan, Math.min(maxPan, cam.position.x));
+        cam.position.y = Math.max(-maxPan, Math.min(maxPan, cam.position.y));
       }
     }
   }
@@ -139,12 +129,17 @@ interface SceneProps {
     const state = controllerState.current;
     if (!cam) return;
 
+    // Only apply orbit math when NOT panning
+    if (state.isPanning) {
+      return; // Skip orbit calculation, use position from onPointerMove()
+    }
+    
     // Обчислюємо позицію камери за сферичними координатами відносно точки фокусу
     const x = state.radius * Math.sin(state.phi) * Math.sin(state.theta);
     const y = state.radius * Math.cos(state.phi);
     const z = state.radius * Math.sin(state.phi) * Math.cos(state.theta);
 
-    // Позиція камери = точка фокусу + зміщення за сферичними координатами + пан-смещение
+    // Позиція камери = точка фокусу + зміщення за сферичними координатами
     cam.position.set(
       state.target.x + x,
       state.target.y + y,
@@ -217,18 +212,10 @@ interface SceneProps {
     // 6. Анімаційний цикл
     function animate() {
       requestAnimationFrame(animate);
-      updateCameraFromOrbit();
       
-      // Анімація переміщення куба при панорамировании
-      const state = controllerState.current;
-      const cube = cubeMeshRef.current;
-      if (cube && state.isPanning) {
-        cube.position.x += state.panMoveX * 0.1;
-        cube.position.y += state.panMoveY * 0.1;
-        
-        // Плавне затухання накопиченого вектора
-        state.panMoveX *= 0.9;
-        state.panMoveY *= 0.9;
+      // Only update orbit position when rotating (left click)
+      if (controllerState.current.isRotating) {
+        updateCameraFromOrbit();
       }
       
       // Перевірка чи сцена ініціалізована перед рендерингом
