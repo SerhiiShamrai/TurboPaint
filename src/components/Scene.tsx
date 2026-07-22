@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { forwardRef, useImperativeHandle, useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 
@@ -27,14 +27,19 @@ interface SceneProps {
   onModelLoad?: (file: File) => void;
 }
 
-export function Scene({ 
+interface SceneRef {
+  loadModelFromFile: (file: File) => void;
+}
+
+export const Scene = forwardRef<SceneRef, SceneProps>(
+  function Scene({ 
   title = '3D Сцена', 
   instruction = "Left mouse button — rotate camera, right mouse button — pan view, scroll wheel — zoom",
   cubeColor = 0x888888,
   cubeSize = 1,
   modifierInstruction = "Middle mouse or Alt+LMB — pan, Left mouse — rotate",
-  onModelLoad
-}: SceneProps) {
+  onModelLoad = undefined,
+}: SceneProps, ref) {
   // Рефи на DOM елементи та Three.js об'єкти
   const containerRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
@@ -181,13 +186,18 @@ const currentModelRef = useRef<THREE.Object3D | null>(null);
         
         // а) Якщо існує поточна модель — прибрати зі сцени та вивільнити пам'ять
         if (currentModelRef.current) {
-          sceneRef.current?.remove(currentModelRef.current);
+          const oldModel = currentModelRef.current;
+          sceneRef.current?.remove(oldModel);
           
-          // Вивільняємо геометрію та матеріали кожного меша всередині
-          gltfScene.traverse((child: any) => {
+          // Вивільняємо геометрію та матеріали старої моделі
+          oldModel.traverse((child: any) => {
             if (child.isMesh) {
-              child.geometry.dispose();
-              child.material.dispose();
+              child.geometry?.dispose();
+              if (Array.isArray(child.material)) {
+                child.material.forEach((m: THREE.Material) => m.dispose());
+              } else {
+                child.material?.dispose();
+              }
             }
           });
         }
@@ -384,9 +394,11 @@ const currentModelRef = useRef<THREE.Object3D | null>(null);
     }
   }, [cubeSize]);
 
+  useImperativeHandle(ref, () => ({ loadModelFromFile }));
+
+  // --- Return JSX ---
   return (
     <div ref={containerRef} className="absolute inset-0 w-full h-full">
-      {/* Заголовок */}
       <div className="absolute top-4 left-4 bg-gray-800/90 backdrop-blur-sm rounded-lg p-4 shadow-lg border border-gray-700">
         <h1 className="text-white font-bold text-lg mb-2">{title}</h1>
         

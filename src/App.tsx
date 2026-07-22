@@ -1,10 +1,11 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { Scene } from './components/Scene';
 import Sidebar from './components/Sidebar';
 
 function App() {
   const [cubeColor, setCubeColor] = useState(0x888888);
   const [cubeSize, setCubeSize] = useState(1);
+  const sceneRef = useRef<{ loadModelFromFile: (file: File) => void }>(null);
 
   return (
     <div className="h-screen w-screen bg-gray-900 flex overflow-hidden">
@@ -13,9 +14,11 @@ function App() {
         cubeSize={cubeSize}
         onColorChange={setCubeColor}
         onSizeChange={setCubeSize}
+        onLoadModel={(file) => sceneRef.current?.loadModelFromFile(file)}
       />
       <main className="flex-1 relative overflow-hidden">
         <Scene
+          ref={sceneRef}
           title="TurboPainter MVP"
           instruction="Ліва кнопка — обертати, колесо — зумувати"
           cubeColor={cubeColor}
