@@ -65,6 +65,8 @@ export const Scene = forwardRef<SceneRef, SceneProps>(
     const controllerState = useRef({
       // Сферичні координати
       radius: 6,
+      minRadius: 2,
+      maxRadius: 20,
       theta: Math.PI / 4,    // Кут обертання навколо осі Y (горизонтальне)
       phi: Math.PI / 3,      // Кут обертання навколо осі X (вертикальне)
       
@@ -83,9 +85,6 @@ export const Scene = forwardRef<SceneRef, SceneProps>(
     // Обмеження
     const MIN_PHI = 0.1;
     const MAX_PHI = Math.PI - 0.1;
-    const MIN_RADIUS = 2;
-    const MAX_RADIUS = 20;
-
     // --- Обробники подій миші ---
 
     function onPointerDown(e: PointerEvent) {
@@ -153,7 +152,7 @@ export const Scene = forwardRef<SceneRef, SceneProps>(
       // Колесо миші: зум (зміна радіусу)
       const zoomSensitivity = 0.005;
       state.radius += e.deltaY * zoomSensitivity;
-      state.radius = Math.max(MIN_RADIUS, Math.min(MAX_RADIUS, state.radius));
+      state.radius = Math.max(state.minRadius, Math.min(state.maxRadius, state.radius));
     }
 
     function onContextMenu(e: MouseEvent) {
@@ -233,11 +232,20 @@ export const Scene = forwardRef<SceneRef, SceneProps>(
           // д) Виставляємо радіус камери (макс розмір * 2)
           controllerState.current.radius = Math.max(size.x, size.y, size.z) * 2;
           
+          // Перерахунок меж під розмір саме цієї моделі
+          const maxDim = Math.max(size.x, size.y, size.z);
+          controllerState.current.minRadius = maxDim * 0.5;
+          controllerState.current.maxRadius = maxDim * 5;
+          controllerState.current.radius = maxDim * 2; // вже в межах нових minRadius/maxRadius
+          
           // е) Оновлюємо камеру одразу після зміни
           updateCameraFromOrbit();
           
           // Повідомляємо батька про завантаження моделі
           onModelLoad?.(file);
+          
+          // Позначаємо, що це кастомна модель
+          isCustomModelRef.current = true;
         }, (err) => {
           console.error('Error loading GLTF model:', err);
         });
