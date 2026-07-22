@@ -5,9 +5,11 @@ import Sidebar from './components/Sidebar';
 function App() {
   const [cubeColor, setCubeColor] = useState(0x888888);
   const [cubeSize, setCubeSize] = useState(1);
+  const [paintMode, setPaintMode] = useState(false);
   const sceneRef = useRef<{ 
     loadModelFromFile: (file: File) => void;
     applyTextureToChannel: (channel: 'map' | 'roughnessMap' | 'metalnessMap' | 'normalMap' | 'emissiveMap', file: File) => void;
+    setPaintMode: (enabled: boolean) => void;
   }>(null);
 
   return (
@@ -15,8 +17,13 @@ function App() {
         <Sidebar
           cubeColor={cubeColor}
           cubeSize={cubeSize}
+          paintMode={paintMode}
           onColorChange={setCubeColor}
           onSizeChange={setCubeSize}
+          onPaintModeChange={(enabled) => {
+            setPaintMode(enabled);
+            sceneRef.current?.setPaintMode(enabled);
+          }}
           onLoadModel={(file) => sceneRef.current?.loadModelFromFile(file)}
           onLoadTexture={(channel, file) => sceneRef.current?.applyTextureToChannel(channel, file)}
         />

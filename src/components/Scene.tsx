@@ -512,6 +512,7 @@ export const Scene = forwardRef<SceneRef, SceneProps>(
           texture.colorSpace = THREE.SRGBColorSpace;
           texture.wrapS = THREE.RepeatWrapping;
           texture.wrapT = THREE.RepeatWrapping;
+          texture.flipY = false;
 
           // Зберігаємо пару {canvas, ctx, texture} для цього матеріалу
           paintCanvasesRef.current.set(material, { canvas, ctx, texture });
