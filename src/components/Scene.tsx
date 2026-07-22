@@ -49,6 +49,10 @@ export function Scene({
     // Жорстке обмеження: target завжди дорівнює cubeMeshRef.current.position
     target: new THREE.Vector3(0, 0, 0),
     
+    // Останні координати курсора для розрахунку дельти
+    lastX: 0,
+    lastY: 0,
+    
      // Стан взаємодії
      isRotating: false,   // Ліва кнопка — обертання навколо об'єкта
      isPanning: false,    // Права кнопка — вільний огляд (трекбол-режим)
@@ -71,7 +75,9 @@ export function Scene({
       state.isPanning = true;
     }
     
-    // lastX и lastY удалены, так как они больше не нужны для панорамирования
+    // Зберігаємо стартову позицію курсора
+    state.lastX = e.clientX;
+    state.lastY = e.clientY;
   }
 
   function onPointerUp() {
@@ -85,7 +91,7 @@ export function Scene({
 
     const dx = e.clientX - state.lastX;
     const dy = e.clientY - state.lastY;
- 
+  
     if (state.isRotating) {
       // Ліва кнопка: обертання навколо об'єкта — оновлюємо кути
       state.theta -= dx * 0.01;
@@ -107,6 +113,10 @@ export function Scene({
         cam.position.y = Math.max(-maxPan, Math.min(maxPan, cam.position.y));
       }
     }
+
+    // Оновлюємо останні координати курсора після розрахунку дельти
+    state.lastX = e.clientX;
+    state.lastY = e.clientY;
   }
 
   function onWheel(e: WheelEvent) {
