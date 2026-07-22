@@ -14,6 +14,8 @@ interface SidebarProps {
   cubeColor?: number;
   /** Розмір кубу */
   cubeSize?: number;
+  /** Поточний стан режиму малювання */
+  paintMode?: boolean;
   /** Callback при зміні кольору */
   onColorChange?: (color: number) => void;
   /** Callback при зміні розміру */
@@ -22,16 +24,24 @@ interface SidebarProps {
   onLoadModel?: (file: File) => void;
   /** Callback для завантаження текстури на канал матеріалу */
   onLoadTexture?: (channel: 'map' | 'roughnessMap' | 'metalnessMap' | 'normalMap' | 'emissiveMap', file: File) => void;
+  /** Callback для перемикання режиму малювання */
+  onPaintModeChange?: (enabled: boolean) => void;
+}
+
+export interface PaintModeMethods {
+  setPaintMode(enabled: boolean): void;
 }
 
 function Sidebar({ 
   title = 'Панель керування', 
   cubeColor = 0x888888,
   cubeSize = 1,
+  paintMode,
   onColorChange,
   onSizeChange,
   onLoadModel,
-  onLoadTexture
+  onLoadTexture,
+  onPaintModeChange
 }: SidebarProps) {
 
   return (
@@ -44,13 +54,35 @@ function Sidebar({
         </p>
       </div>
 
+      {/* Кнопка перемикання режиму малювання */}
+      <button
+        onClick={() => onPaintModeChange?.(!paintMode)}
+        className={`w-full font-semibold py-2 px-4 rounded transition-colors ${
+          paintMode 
+            ? 'bg-purple-600 hover:bg-purple-700 text-white' 
+            : 'bg-gray-600 hover:bg-gray-700 text-gray-300'
+        }`}
+      >
+        {paintMode ? '🔄 Режим огляду' : '🖌 Режим малювання'}
+      </button>
+
       {/* Інструкція */}
       <div className="bg-gray-700 rounded-lg p-3">
         <h3 className="text-white font-semibold mb-2 text-sm">Інструкція:</h3>
         <ul className="text-gray-300 text-xs space-y-1">
-          <li>• Ліва кнопка — обертати камеру</li>
-          <li>• Колесо миші — зумувати</li>
-          <li>• Права кнопка — переміщати</li>
+          {paintMode ? (
+            <>
+              <li>• Ліва кнопка — малювати</li>
+              <li>• Середня кнопка — обертати камеру</li>
+              <li>• Права кнопка — переміщати</li>
+            </>
+          ) : (
+            <>
+              <li>• Ліва кнопка — обертати камеру</li>
+              <li>• Колесо миші — зумувати</li>
+              <li>• Права кнопка — переміщати</li>
+            </>
+          )}
         </ul>
       </div>
 

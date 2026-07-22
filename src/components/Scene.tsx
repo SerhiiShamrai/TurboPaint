@@ -42,9 +42,16 @@ function findFirstMesh(root: THREE.Object3D): THREE.Mesh | null {
 
 type MaterialChannel = 'map' | 'roughnessMap' | 'metalnessMap' | 'normalMap' | 'emissiveMap';
 
+interface PaintCanvasInfo {
+  canvas: HTMLCanvasElement;
+  ctx: CanvasRenderingContext2D;
+  texture: THREE.CanvasTexture;
+}
+
 interface SceneRef {
   loadModelFromFile: (file: File) => void;
   applyTextureToChannel: (channel: MaterialChannel, file: File) => void;
+  setPaintMode: (enabled: boolean) => void;
 }
 
 export const Scene = forwardRef<SceneRef, SceneProps>(
@@ -63,6 +70,12 @@ export const Scene = forwardRef<SceneRef, SceneProps>(
     const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
     const currentModelRef = useRef<THREE.Object3D | null>(null);
     const isCustomModelRef = useRef<boolean>(false);
+
+    // Режим малювання
+    const isPaintModeRef = useRef<boolean>(false);
+
+    // Map для зберігання canvas/texture пар для кожного матеріалу
+    const paintCanvasesRef = useRef<Map<THREE.Material, PaintCanvasInfo>>(new Map());
 
     // --- Стан контролера камери (зберігається в useRef для збереження між рендерами) ---
     const controllerState = useRef({
@@ -94,7 +107,14 @@ export const Scene = forwardRef<SceneRef, SceneProps>(
       const state = controllerState.current;
       
       if (e.button === 0) {     // Ліва кнопка — обертання навколо об'єкта
-        state.isRotating = true;
+        // У режимі малювання LMB не викликає обертання
+        if (!isPaintModeRef.current) {
+          state.isRotating = true;
+        }
+      } else if (e.button === 1) {   // Середня кнопка — обертання (коли увімкнено режим малювання)
+        if (isPaintModeRef.current) {
+          state.isRotating = true;
+        }
       } else if (e.button === 2) { // Права кнопка — вільний огляд
         state.isPanning = true;
       }
@@ -442,9 +462,85 @@ export const Scene = forwardRef<SceneRef, SceneProps>(
       }
     }, [cubeSize]);
 
+    // Функція ініціалізації CanvasTexture для кожного матеріалу поточної моделі
+    function initializePaintCanvasesForModel() {
+      if (!currentModelRef.current) return;
+
+      // Очищаємо старі canvas для всіх матеріалів
+      paintCanvasesRef.current.forEach((info) => {
+        info.texture.dispose();
+        info.canvas.remove();
+      });
+      paintCanvasesRef.current.clear();
+
+      // Проходимо по всіх мешах у моделі
+      currentModelRef.current.traverse((child: any) => {
+        if (!child.isMesh) return;
+
+        const materials = Array.isArray(child.material) ? child.material : [child.material];
+
+        materials.forEach((material: THREE.Material) => {
+          // Перевіряємо, чи вже є canvas для цього матеріалу
+          if (paintCanvasesRef.current.has(material)) return;
+
+          // Створюємо новий canvas 1024x1024
+          const canvas = document.createElement('canvas');
+          canvas.width = 1024;
+          canvas.height = 1024;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) return;
+
+          // Отримуємо поточну текстуру матеріалу (map канал)
+          const currentMap = material.map;
+          
+          // Очищаємо canvas базовим кольором
+          ctx.fillStyle = '#808080';
+          ctx.fillRect(0, 0, 1024, 1024);
+
+          // Якщо є поточна текстура — малюємо її на canvas
+          if (currentMap && currentMap.image) {
+            const sourceImage = currentMap.image;
+            try {
+              ctx.drawImage(sourceImage, 0, 0, 1024, 1024);
+            } catch (err) {
+              console.warn('Could not draw texture to canvas:', err);
+            }
+          }
+
+          // Створюємо CanvasTexture з canvas
+          const texture = new THREE.CanvasTexture(canvas);
+          texture.colorSpace = THREE.SRGBColorSpace;
+          texture.wrapS = THREE.RepeatWrapping;
+          texture.wrapT = THREE.RepeatWrapping;
+
+          // Зберігаємо пару {canvas, ctx, texture} для цього матеріалу
+          paintCanvasesRef.current.set(material, { canvas, ctx, texture });
+
+          // Призначаємо CanvasTexture як material.map замість статичної
+          const oldTexture = material.map;
+          if (oldTexture) {
+            oldTexture.dispose();
+          }
+          material.map = texture;
+          material.needsUpdate = true;
+        });
+      });
+    }
+
+    // Функція для перемикання режиму малювання
+    function setPaintMode(enabled: boolean) {
+      isPaintModeRef.current = enabled;
+      
+      if (enabled) {
+        // При увімкненні режиму малювання — ініціалізуємо canvas для кожного матеріалу
+        initializePaintCanvasesForModel();
+      }
+    }
+
     useImperativeHandle(ref, () => ({ 
       loadModelFromFile,
-      applyTextureToChannel
+      applyTextureToChannel,
+      setPaintMode
     }));
 
     // --- Return JSX ---
