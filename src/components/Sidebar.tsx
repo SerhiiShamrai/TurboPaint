@@ -116,7 +116,7 @@ function Sidebar({
 
           {/* Розмір кисті */}
           <div>
-            <label className="text-gray-300 text-xs block mb-1">Розмір кисті: {brushSize}</label>
+            <label className="text-gray-300 text-xs block mb-1">Розмір кисті: {brushSize} px</label>
             <input
               type="range"
               min="2"
