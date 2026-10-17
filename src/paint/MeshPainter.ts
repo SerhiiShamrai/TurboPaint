@@ -1,24 +1,28 @@
 import * as THREE from 'three';
 
 /**
- * Проєкційне малювання по 3D-моделі (як у Substance Painter).
+ * Проєкційне малювання по 3D-моделі (як у Substance Painter) із системою шарів.
  *
  * Принцип роботи:
- * - Кожен матеріал отримує власний render target (шар фарби) у UV-просторі моделі.
+ * - Кожен матеріал має: базу (колір/текстура Albedo моделі), стек шарів фарби
+ *   (по одному render target на шар, створюється при першому мазку) та композит —
+ *   результат "база + видимі шари", який і підставляється в material.map.
  * - Мазок — це коло на ЕКРАНІ. Модель рендериться "розгорнутою" в UV (gl_Position = uv),
  *   а у фрагментному шейдері світова позиція проєктується назад на екран, і якщо
  *   фрагмент потрапив у коло кисті — він фарбується. Тому товщина мазка однакова
  *   на екрані на будь-якій грані й під будь-яким кутом.
+ * - Малюємо завжди в активний шар. Шар зберігає фарбу з прозорістю (premultiplied alpha),
+ *   тому шари можна вмикати/вимикати й видаляти, не чіпаючи решту.
  * - Видимість: перед мазком рендериться карта глибини з камери. Фрагменти, що лежать
  *   за видимою поверхнею (зворотна сторона, інші деталі), не фарбуються.
- * - Після мазка UV-острівці розширюються на кілька текселів (padding), щоб на швах
- *   не було світлих ліній при білінійній фільтрації та міпмапах.
+ * - Після збирання композиту UV-острівці розширюються на кілька текселів (padding),
+ *   щоб на швах не було світлих ліній при білінійній фільтрації та міпмапах.
  */
 
 /** Максимум відбитків кисті за один виклик відмальовування */
 export const MAX_STAMPS = 32;
 
-/** Розмір текстури шару фарби */
+/** Розмір текстур (бази, шарів, композиту) */
 const TEXTURE_SIZE = 2048;
 
 /** Кількість проходів padding (парна, бо ping-pong між двома targets) */
@@ -144,6 +148,23 @@ const DILATE_FRAG = /* glsl */ `
   }
 `;
 
+// Копіювання текстури на весь target 1:1 (для збирання композиту)
+const COPY_VERT = /* glsl */ `
+  varying vec2 vUv;
+  void main() {
+    vUv = position.xy * 0.5 + 0.5;
+    gl_Position = vec4(position.xy, 0.0, 1.0);
+  }
+`;
+
+const COPY_FRAG = /* glsl */ `
+  uniform sampler2D uTex;
+  varying vec2 vUv;
+  void main() {
+    gl_FragColor = texture2D(uTex, vUv);
+  }
+`;
+
 type PaintableMaterial = THREE.Material & {
   map: THREE.Texture | null;
   color: THREE.Color;
@@ -163,12 +184,25 @@ interface ProxyEntry {
   slotCount: number;
 }
 
-interface Layer {
+/** Все, що потрібно для малювання по одному матеріалу моделі */
+interface MaterialPaint {
   material: PaintableMaterial;
-  target: THREE.WebGLRenderTarget;
+  /** Запечений початковий вигляд матеріалу (колір * Albedo), без padding */
+  base: THREE.WebGLRenderTarget;
+  /** Результат "база + видимі шари" з padding — саме його показує material.map */
+  composite: THREE.WebGLRenderTarget;
+  /** Фарба кожного шару (id шару -> target). Створюється при першому мазку по шару */
+  layers: Map<string, THREE.WebGLRenderTarget>;
   scene: THREE.Scene;
   proxies: ProxyEntry[];
+  /** Композит треба перезібрати */
   dirty: boolean;
+}
+
+/** Опис шару, потрібний малювальнику (решта — назва, тип — живе в UI) */
+export interface PaintLayerInfo {
+  id: string;
+  visible: boolean;
 }
 
 export interface PaintRequest {
@@ -189,8 +223,13 @@ export interface PaintRequest {
 
 export class MeshPainter {
   private readonly renderer: THREE.WebGLRenderer;
-  private readonly layers = new Map<THREE.Material, Layer>();
+  private readonly materials = new Map<THREE.Material, MaterialPaint>();
   private preparedModel: THREE.Object3D | null = null;
+
+  /** Шари знизу вгору. Живуть у painter, а не в матеріалах, тому переживають reset() */
+  private layerOrder: PaintLayerInfo[] = [];
+  private activeLayerId: string | null = null;
+  private layerSignature = '';
 
   private readonly centers: THREE.Vector2[] = Array.from(
     { length: MAX_STAMPS },
@@ -223,9 +262,17 @@ export class MeshPainter {
     uMinAlpha: { value: 0.99 },
   };
 
+  private readonly copyUniforms = {
+    uTex: { value: null as THREE.Texture | null },
+  };
+
   private readonly stampMaterial: THREE.ShaderMaterial;
   private readonly bakeMaterial: THREE.ShaderMaterial;
   private readonly dilateMaterial: THREE.ShaderMaterial;
+  /** Копіювання без змішування — кладе базу в композит */
+  private readonly copyReplaceMaterial: THREE.ShaderMaterial;
+  /** Копіювання з premultiplied alpha-over — накладає шар фарби на композит */
+  private readonly copyOverMaterial: THREE.ShaderMaterial;
   private readonly hiddenMaterial: THREE.MeshBasicMaterial;
   private readonly depthOverride: THREE.MeshBasicMaterial;
 
@@ -278,6 +325,33 @@ export class MeshPainter {
       blending: THREE.NoBlending,
     });
 
+    this.copyReplaceMaterial = new THREE.ShaderMaterial({
+      uniforms: this.copyUniforms,
+      vertexShader: COPY_VERT,
+      fragmentShader: COPY_FRAG,
+      side: THREE.DoubleSide,
+      depthTest: false,
+      depthWrite: false,
+      blending: THREE.NoBlending,
+    });
+
+    // Шар зберігає колір, уже помножений на альфу, тому "over" = src + dst * (1 - src.a)
+    this.copyOverMaterial = new THREE.ShaderMaterial({
+      uniforms: this.copyUniforms,
+      vertexShader: COPY_VERT,
+      fragmentShader: COPY_FRAG,
+      side: THREE.DoubleSide,
+      transparent: true,
+      depthTest: false,
+      depthWrite: false,
+      blending: THREE.CustomBlending,
+      blendEquation: THREE.AddEquation,
+      blendSrc: THREE.OneFactor,
+      blendDst: THREE.OneMinusSrcAlphaFactor,
+      blendSrcAlpha: THREE.OneFactor,
+      blendDstAlpha: THREE.OneMinusSrcAlphaFactor,
+    });
+
     this.hiddenMaterial = new THREE.MeshBasicMaterial({ visible: false });
     this.depthOverride = new THREE.MeshBasicMaterial({
       side: THREE.DoubleSide,
@@ -289,9 +363,9 @@ export class MeshPainter {
     this.fsScene.add(this.fsMesh);
   }
 
-  /** Чи є шар фарби для цього матеріалу */
-  hasLayer(material: THREE.Material): boolean {
-    return this.layers.has(material);
+  /** Чи малюється цей матеріал (тобто його map підмінений композитом) */
+  ownsMaterial(material: THREE.Material): boolean {
+    return this.materials.has(material);
   }
 
   /** Карту глибини треба оновити (наприклад, змінилась геометрія) */
@@ -300,8 +374,35 @@ export class MeshPainter {
   }
 
   /**
-   * Готує модель до малювання: створює шар фарби для кожного матеріалу
-   * та "запікає" в нього поточний колір і текстуру Albedo.
+   * Синхронізує список шарів зі станом UI: порядок знизу вгору, видимість, активний шар.
+   * Фарба видалених шарів звільняється. Безпечно викликати скільки завгодно разів.
+   */
+  syncLayers(layers: PaintLayerInfo[], activeId: string | null): void {
+    const ids = new Set(layers.map((l) => l.id));
+    for (const mp of this.materials.values()) {
+      for (const [id, target] of mp.layers) {
+        if (!ids.has(id)) {
+          target.dispose();
+          mp.layers.delete(id);
+        }
+      }
+    }
+
+    const signature = layers.map((l) => `${l.id}:${l.visible ? 1 : 0}`).join(',');
+    const changed = signature !== this.layerSignature;
+    this.layerSignature = signature;
+    this.layerOrder = layers.map((l) => ({ id: l.id, visible: l.visible }));
+    this.activeLayerId = activeId;
+
+    // Зміна активного шару не потребує перезбирання, а склад/видимість — потребує
+    if (changed) {
+      for (const mp of this.materials.values()) mp.dirty = true;
+    }
+  }
+
+  /**
+   * Готує модель до малювання: створює базу/композит для кожного матеріалу
+   * та "запікає" в базу поточний колір і текстуру Albedo.
    */
   prepare(model: THREE.Object3D): void {
     if (this.preparedModel === model) return;
@@ -309,7 +410,7 @@ export class MeshPainter {
     this.preparedModel = model;
     model.updateMatrixWorld(true);
 
-    const newLayers: Layer[] = [];
+    const created: MaterialPaint[] = [];
 
     model.traverse((obj) => {
       const mesh = obj as THREE.Mesh;
@@ -321,11 +422,11 @@ export class MeshPainter {
       materials.forEach((material, slot) => {
         if (!material || !isPaintable(material)) return;
 
-        let layer = this.layers.get(material);
-        if (!layer) {
-          layer = this.createLayer(material);
-          this.layers.set(material, layer);
-          newLayers.push(layer);
+        let mp = this.materials.get(material);
+        if (!mp) {
+          mp = this.createMaterialPaint(material);
+          this.materials.set(material, mp);
+          created.push(mp);
         }
 
         const proxyMesh = new THREE.Mesh(mesh.geometry, this.stampMaterial);
@@ -333,7 +434,7 @@ export class MeshPainter {
         proxyMesh.matrixAutoUpdate = false;
         proxyMesh.matrixWorldAutoUpdate = false;
         proxyMesh.matrixWorld.copy(mesh.matrixWorld);
-        layer.scene.add(proxyMesh);
+        mp.scene.add(proxyMesh);
 
         const entry: ProxyEntry = {
           mesh: proxyMesh,
@@ -341,22 +442,24 @@ export class MeshPainter {
           slot,
           slotCount: isArray ? materials.length : 0,
         };
-        layer.proxies.push(entry);
+        mp.proxies.push(entry);
         this.assignMaterial(entry, this.stampMaterial);
       });
     });
 
-    // Запікаємо базовий вигляд матеріалів у шари і підміняємо map на шар фарби
+    // Запікаємо базовий вигляд матеріалів і підміняємо map на композит
     const originalMaps = new Set<THREE.Texture>();
-    for (const layer of newLayers) {
-      const material = layer.material;
+    for (const mp of created) {
+      const material = mp.material;
       const originalMap = material.map;
-      this.bake(layer, originalMap, material.color);
+      this.bake(mp, originalMap, material.color);
 
       if (originalMap) originalMaps.add(originalMap);
-      material.map = layer.target.texture;
-      material.color.set(0xffffff); // колір уже запечений у шар
+      material.map = mp.composite.texture;
+      material.color.set(0xffffff); // колір уже запечений у базу
       material.needsUpdate = true;
+
+      this.recomposite(mp);
     }
     // Оригінальні текстури більше не потрібні — звільняємо відеопам'ять
     originalMaps.forEach((texture) => texture.dispose());
@@ -364,19 +467,23 @@ export class MeshPainter {
 
   /**
    * Замінює базову текстуру (Albedo) матеріалу, що вже малюється.
-   * Намальоване раніше при цьому скидається. Повертає false, якщо шару немає.
+   * Шари з фарбою лишаються поверх нової бази. Повертає false, якщо матеріал не малюється.
    */
   setBaseMap(material: THREE.Material, texture: THREE.Texture): boolean {
-    const layer = this.layers.get(material);
-    if (!layer) return false;
-    this.syncProxies(layer);
-    this.bake(layer, texture, new THREE.Color(1, 1, 1));
+    const mp = this.materials.get(material);
+    if (!mp) return false;
+    this.syncProxies(mp);
+    this.bake(mp, texture, new THREE.Color(1, 1, 1));
+    mp.dirty = true;
     return true;
   }
 
-  /** Малює відбитки кисті на всіх видимих поверхнях моделі */
+  /** Малює відбитки кисті на всіх видимих поверхнях моделі, в активний шар */
   paint(req: PaintRequest): void {
-    if (this.layers.size === 0 || req.points.length === 0) return;
+    // Малювати можна лише в існуючий, видимий активний шар
+    const active = this.layerOrder.find((l) => l.id === this.activeLayerId);
+    if (!active || !active.visible) return;
+    if (this.materials.size === 0 || req.points.length === 0) return;
 
     const { scene, camera } = req;
     const renderer = this.renderer;
@@ -408,38 +515,41 @@ export class MeshPainter {
       u.uModelSize.value = req.modelSize;
       u.uColor.value.copy(req.color);
 
-      for (const layer of this.layers.values()) this.syncProxies(layer);
+      for (const mp of this.materials.values()) this.syncProxies(mp);
 
-      // 3. Відбитки пачками по MAX_STAMPS — один рендер на пачку для кожного шару
+      // 3. Відбитки пачками по MAX_STAMPS — один рендер на пачку для кожного матеріалу
       renderer.autoClear = false;
       for (let i = 0; i < req.points.length; i += MAX_STAMPS) {
         const chunk = req.points.slice(i, i + MAX_STAMPS);
         chunk.forEach((p, k) => this.centers[k].set(p.x, p.y));
         u.uCount.value = chunk.length;
 
-        for (const layer of this.layers.values()) {
-          renderer.setRenderTarget(layer.target);
-          renderer.render(layer.scene, this.dummyCamera);
-          layer.dirty = true;
+        for (const mp of this.materials.values()) {
+          renderer.setRenderTarget(this.ensureLayerTarget(mp, active.id));
+          renderer.render(mp.scene, this.dummyCamera);
+          mp.dirty = true;
         }
       }
     });
   }
 
-  /** Розширює UV-острівці (padding) у шарах, які змінились. Викликати раз на кадр. */
+  /** Перезбирає композит у матеріалів, що змінились. Викликати раз на кадр. */
   flush(): void {
-    for (const layer of this.layers.values()) {
-      if (layer.dirty) this.dilate(layer);
+    for (const mp of this.materials.values()) {
+      if (mp.dirty) this.recomposite(mp);
     }
   }
 
-  /** Прибирає всі шари (наприклад, при завантаженні нової моделі) */
+  /** Прибирає фарбу всіх матеріалів (наприклад, при завантаженні нової моделі). Список шарів лишається. */
   reset(): void {
-    for (const layer of this.layers.values()) {
-      layer.proxies.forEach((p) => layer.scene.remove(p.mesh));
-      layer.target.dispose();
+    for (const mp of this.materials.values()) {
+      mp.proxies.forEach((p) => mp.scene.remove(p.mesh));
+      mp.base.dispose();
+      mp.composite.dispose();
+      mp.layers.forEach((target) => target.dispose());
+      mp.layers.clear();
     }
-    this.layers.clear();
+    this.materials.clear();
     this.preparedModel = null;
     this.depthKey = null;
   }
@@ -454,6 +564,8 @@ export class MeshPainter {
     this.stampMaterial.dispose();
     this.bakeMaterial.dispose();
     this.dilateMaterial.dispose();
+    this.copyReplaceMaterial.dispose();
+    this.copyOverMaterial.dispose();
     this.hiddenMaterial.dispose();
     this.depthOverride.dispose();
     this.fsMesh.geometry.dispose();
@@ -461,9 +573,16 @@ export class MeshPainter {
 
   // ---------------------------------------------------------------------------
 
-  private createLayer(material: PaintableMaterial): Layer {
-    const target = this.createTarget(true);
-    return { material, target, scene: new THREE.Scene(), proxies: [], dirty: false };
+  private createMaterialPaint(material: PaintableMaterial): MaterialPaint {
+    return {
+      material,
+      base: this.createTarget(false),
+      composite: this.createTarget(true),
+      layers: new Map(),
+      scene: new THREE.Scene(),
+      proxies: [],
+      dirty: false,
+    };
   }
 
   private createTarget(withMipmaps: boolean): THREE.WebGLRenderTarget {
@@ -480,6 +599,21 @@ export class MeshPainter {
     if (withMipmaps) {
       target.texture.anisotropy = this.renderer.capabilities.getMaxAnisotropy();
     }
+    return target;
+  }
+
+  /** Target фарби шару для матеріалу; при першому зверненні створюється порожнім (прозорим) */
+  private ensureLayerTarget(mp: MaterialPaint, layerId: string): THREE.WebGLRenderTarget {
+    const existing = mp.layers.get(layerId);
+    if (existing) return existing;
+
+    const target = this.createTarget(false);
+    mp.layers.set(layerId, target);
+
+    const renderer = this.renderer;
+    renderer.setRenderTarget(target);
+    renderer.setClearColor(0x000000, 0);
+    renderer.clear(true, false, false);
     return target;
   }
 
@@ -546,8 +680,8 @@ export class MeshPainter {
   }
 
   /** Підтягує геометрію та матрицю оригінального меша (вони могли змінитись) */
-  private syncProxies(layer: Layer): void {
-    for (const p of layer.proxies) {
+  private syncProxies(mp: MaterialPaint): void {
+    for (const p of mp.proxies) {
       p.mesh.geometry = p.source.geometry;
       p.mesh.matrixWorld.copy(p.source.matrixWorld);
     }
@@ -564,37 +698,62 @@ export class MeshPainter {
     }
   }
 
-  /** Перемальовує шар: базовий колір * текстура всередині UV-острівців, поза ними — порожньо */
-  private bake(layer: Layer, map: THREE.Texture | null, color: THREE.Color): void {
+  /** Перемальовує базу: колір * текстура всередині UV-острівців, поза ними — порожньо */
+  private bake(mp: MaterialPaint, map: THREE.Texture | null, color: THREE.Color): void {
     this.withRenderState(() => {
       const renderer = this.renderer;
       this.bakeUniforms.uMap.value = map;
       this.bakeUniforms.uHasMap.value = map !== null;
       this.bakeUniforms.uColor.value.copy(color);
 
-      layer.proxies.forEach((p) => this.assignMaterial(p, this.bakeMaterial));
+      mp.proxies.forEach((p) => this.assignMaterial(p, this.bakeMaterial));
 
-      renderer.setRenderTarget(layer.target);
+      renderer.setRenderTarget(mp.base);
       renderer.setClearColor(0x000000, 0);
       renderer.autoClear = false;
       renderer.clear(true, false, false);
-      renderer.render(layer.scene, this.dummyCamera);
+      renderer.render(mp.scene, this.dummyCamera);
 
-      layer.proxies.forEach((p) => this.assignMaterial(p, this.stampMaterial));
+      mp.proxies.forEach((p) => this.assignMaterial(p, this.stampMaterial));
     });
-    this.dilate(layer);
+  }
+
+  /** Збирає композит: база, поверх неї видимі шари знизу вгору, потім padding */
+  private recomposite(mp: MaterialPaint): void {
+    this.withRenderState(() => {
+      const renderer = this.renderer;
+      renderer.autoClear = false;
+      renderer.setClearColor(0x000000, 0);
+      renderer.setRenderTarget(mp.composite);
+      renderer.clear(true, false, false);
+
+      this.fsMesh.material = this.copyReplaceMaterial;
+      this.copyUniforms.uTex.value = mp.base.texture;
+      renderer.render(this.fsScene, this.fsCamera);
+
+      this.fsMesh.material = this.copyOverMaterial;
+      for (const info of this.layerOrder) {
+        if (!info.visible) continue;
+        const target = mp.layers.get(info.id);
+        if (!target) continue; // шар ще без жодного мазка по цьому матеріалу
+        this.copyUniforms.uTex.value = target.texture;
+        renderer.render(this.fsScene, this.fsCamera);
+      }
+    });
+    this.dilate(mp);
   }
 
   /** Padding: заповнює порожні текселі навколо острівців кольором найближчих сусідів */
-  private dilate(layer: Layer): void {
+  private dilate(mp: MaterialPaint): void {
     const scratch = this.ensureScratch();
     this.withRenderState(() => {
       const renderer = this.renderer;
       renderer.autoClear = false;
+      this.fsMesh.material = this.dilateMaterial;
 
       for (let i = 0; i < PADDING_PASSES; i++) {
-        const src = i % 2 === 0 ? layer.target : scratch;
-        const dst = i % 2 === 0 ? scratch : layer.target;
+        const src = i % 2 === 0 ? mp.composite : scratch;
+        const dst = i % 2 === 0 ? scratch : mp.composite;
         // Перший прохід вважає джерелом лише справжні пікселі (стара "рамка" перераховується),
         // наступні — і справжні, і вже заповнені
         this.dilateUniforms.uSrc.value = src.texture;
@@ -603,7 +762,7 @@ export class MeshPainter {
         renderer.render(this.fsScene, this.fsCamera);
       }
     });
-    layer.dirty = false;
+    mp.dirty = false;
   }
 
   private withRenderState(fn: () => void): void {
