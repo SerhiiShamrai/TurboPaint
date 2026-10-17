@@ -16,6 +16,14 @@ interface SidebarProps {
   cubeSize?: number;
   /** Поточний стан режиму малювання */
   paintMode?: boolean;
+  /** Колір кисті (CSS hex, наприклад '#ff0000') */
+  brushColor?: string;
+  /** Радіус кисті в пікселях текстури */
+  brushSize?: number;
+  /** Callback при зміні кольору кисті */
+  onBrushColorChange?: (color: string) => void;
+  /** Callback при зміні розміру кисті */
+  onBrushSizeChange?: (size: number) => void;
   /** Callback при зміні кольору */
   onColorChange?: (color: number) => void;
   /** Callback при зміні розміру */
@@ -37,6 +45,10 @@ function Sidebar({
   cubeColor = 0x888888,
   cubeSize = 1,
   paintMode,
+  brushColor = '#ff0000',
+  brushSize = 24,
+  onBrushColorChange,
+  onBrushSizeChange,
   onColorChange,
   onSizeChange,
   onLoadModel,
@@ -85,6 +97,38 @@ function Sidebar({
           )}
         </ul>
       </div>
+
+      {/* Налаштування кисті (лише в режимі малювання) */}
+      {paintMode && (
+        <div className="bg-gray-700 rounded-lg p-3">
+          <h3 className="text-white font-semibold mb-2 text-sm">Кисть:</h3>
+
+          {/* Колір кисті */}
+          <div className="mb-3">
+            <label className="text-gray-300 text-xs block mb-1">Колір кисті:</label>
+            <input
+              type="color"
+              value={brushColor}
+              onChange={(e) => onBrushColorChange?.(e.target.value)}
+              className="w-full h-8 rounded cursor-pointer"
+            />
+          </div>
+
+          {/* Розмір кисті */}
+          <div>
+            <label className="text-gray-300 text-xs block mb-1">Розмір кисті: {brushSize}</label>
+            <input
+              type="range"
+              min="2"
+              max="128"
+              step="1"
+              value={brushSize}
+              onChange={(e) => onBrushSizeChange?.(parseInt(e.target.value, 10))}
+              className="w-full accent-purple-500"
+            />
+          </div>
+        </div>
+      )}
 
       {/* Налаштування куба */}
       <div className="bg-gray-700 rounded-lg p-3">

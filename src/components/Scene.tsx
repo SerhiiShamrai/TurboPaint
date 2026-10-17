@@ -25,6 +25,46 @@ interface SceneProps {
   modifierInstruction?: string;
   /** Callback для завантаження моделі */
   onModelLoad?: (file: File) => void;
+  /** Колір кисті (CSS hex, наприклад '#ff0000') */
+  brushColor?: string;
+  /** Радіус кисті в пікселях текстури 1024x1024 */
+  brushSize?: number;
+}
+
+/** Розмір canvas-текстури для малювання */
+const PAINT_TEXTURE_SIZE = 1024;
+
+/** Відступ усередині комірки UV-атласу куба (частка комірки), щоб мазок не затікав на сусідню грань */
+const CUBE_ATLAS_PADDING = 0.08;
+
+/**
+ * Створює куб з UV-атласом 3x2: кожна грань займає власну комірку текстури.
+ * У стандартному BoxGeometry всі 6 граней мають однакові UV (0..1), тому малюнок
+ * дублювався б на всіх гранях одразу.
+ */
+function createCubeGeometry(size: number): THREE.BoxGeometry {
+  const geometry = new THREE.BoxGeometry(size, size, size);
+  const uv = geometry.attributes.uv as THREE.BufferAttribute;
+  const inner = 1 - 2 * CUBE_ATLAS_PADDING;
+
+  // BoxGeometry будує грані по черзі (+x, -x, +y, -y, +z, -z), по 4 вершини на грань
+  for (let face = 0; face < 6; face++) {
+    const col = face % 3;
+    const row = Math.floor(face / 3);
+    for (let i = 0; i < 4; i++) {
+      const idx = face * 4 + i;
+      const u = uv.getX(idx);
+      const v = uv.getY(idx);
+      uv.setXY(
+        idx,
+        (col + CUBE_ATLAS_PADDING + u * inner) / 3,
+        // Текстури в нас з flipY = false (як у glTF): v = 0 — верхній рядок canvas
+        (row + CUBE_ATLAS_PADDING + (1 - v) * inner) / 2
+      );
+    }
+  }
+  uv.needsUpdate = true;
+  return geometry;
 }
 
 /**
@@ -62,6 +102,8 @@ export const Scene = forwardRef<SceneRef, SceneProps>(
     cubeSize = 1,
     modifierInstruction = "Middle mouse or Alt+LMB — pan, Left mouse — rotate",
     onModelLoad = undefined,
+    brushColor = '#ff0000',
+    brushSize = 24,
   }: SceneProps, ref) {
     // Рефи на DOM елементи та Three.js об'єкти
     const containerRef = useRef<HTMLDivElement>(null);
@@ -76,6 +118,18 @@ export const Scene = forwardRef<SceneRef, SceneProps>(
 
     // Map для зберігання canvas/texture пар для кожного матеріалу
     const paintCanvasesRef = useRef<Map<THREE.Material, PaintCanvasInfo>>(new Map());
+
+    // Поточні налаштування кисті (ref, бо обробники подій реєструються один раз)
+    const brushRef = useRef({ color: brushColor, size: brushSize });
+    brushRef.current = { color: brushColor, size: brushSize };
+
+    // Стан мазка: чи тиснемо ЛКМ та остання точка на canvas (для з'єднання точок лінією)
+    const paintStateRef = useRef<{
+      isPainting: boolean;
+      last: { info: PaintCanvasInfo; x: number; y: number } | null;
+    }>({ isPainting: false, last: null });
+
+    const raycasterRef = useRef(new THREE.Raycaster());
 
     // --- Стан контролера камери (зберігається в useRef для збереження між рендерами) ---
     const controllerState = useRef({
@@ -101,14 +155,101 @@ export const Scene = forwardRef<SceneRef, SceneProps>(
     // Обмеження
     const MIN_PHI = 0.1;
     const MAX_PHI = Math.PI - 0.1;
+
+    // --- Малювання ---
+
+    /**
+     * Ставить один відбиток кисті в точці екрана: промінь з камери -> перетин з моделлю ->
+     * UV точки перетину -> піксель на canvas-текстурі відповідного матеріалу.
+     */
+    function paintAtClient(clientX: number, clientY: number) {
+      const renderer = rendererRef.current;
+      const camera = cameraRef.current;
+      const model = currentModelRef.current;
+      const paint = paintStateRef.current;
+      if (!renderer || !camera || !model) return;
+
+      const rect = renderer.domElement.getBoundingClientRect();
+      const ndc = new THREE.Vector2(
+        ((clientX - rect.left) / rect.width) * 2 - 1,
+        -((clientY - rect.top) / rect.height) * 2 + 1
+      );
+
+      camera.updateMatrixWorld();
+      raycasterRef.current.setFromCamera(ndc, camera);
+      const hit = raycasterRef.current.intersectObject(model, true)[0];
+
+      // Промінь не потрапив у модель (або в меш без UV) — розриваємо мазок
+      if (!hit || !hit.uv) {
+        paint.last = null;
+        return;
+      }
+
+      const mesh = hit.object as THREE.Mesh;
+      const material = Array.isArray(mesh.material)
+        ? mesh.material[hit.face?.materialIndex ?? 0]
+        : mesh.material;
+      const info = paintCanvasesRef.current.get(material);
+      if (!info) {
+        paint.last = null;
+        return;
+      }
+
+      // UV можуть виходити за 0..1 (RepeatWrapping) — зводимо до одиничного квадрата
+      const u = hit.uv.x - Math.floor(hit.uv.x);
+      const v = hit.uv.y - Math.floor(hit.uv.y);
+      const x = u * info.canvas.width;
+      const y = v * info.canvas.height; // flipY = false: v = 0 — верхній рядок canvas
+
+      const { ctx } = info;
+      const { color, size } = brushRef.current;
+      ctx.fillStyle = color;
+      ctx.strokeStyle = color;
+      ctx.lineWidth = size * 2;
+      ctx.lineCap = 'round';
+
+      const last = paint.last;
+      const maxJump = info.canvas.width * 0.15; // більший стрибок = перетнули UV-шов, не з'єднуємо
+      if (last && last.info === info && Math.hypot(x - last.x, y - last.y) < maxJump) {
+        ctx.beginPath();
+        ctx.moveTo(last.x, last.y);
+        ctx.lineTo(x, y);
+        ctx.stroke();
+      } else {
+        ctx.beginPath();
+        ctx.arc(x, y, size, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      info.texture.needsUpdate = true;
+      paint.last = { info, x, y };
+    }
+
+    /**
+     * Мазок між двома позиціями курсора: проміжні точки беремо кожні ~3 px екрана,
+     * щоб при швидкому русі лінія не мала розривів.
+     */
+    function paintStroke(fromX: number, fromY: number, toX: number, toY: number) {
+      const dist = Math.hypot(toX - fromX, toY - fromY);
+      const steps = Math.min(300, Math.max(1, Math.ceil(dist / 3)));
+      for (let i = 1; i <= steps; i++) {
+        const t = i / steps;
+        paintAtClient(fromX + (toX - fromX) * t, fromY + (toY - fromY) * t);
+      }
+    }
+
     // --- Обробники подій миші ---
 
     function onPointerDown(e: PointerEvent) {
       const state = controllerState.current;
-      
+
       if (e.button === 0) {     // Ліва кнопка — обертання навколо об'єкта
-        // У режимі малювання LMB не викликає обертання
-        if (!isPaintModeRef.current) {
+        if (isPaintModeRef.current) {
+          // У режимі малювання LMB малює (камеру не обертає)
+          paintStateRef.current.isPainting = true;
+          paintStateRef.current.last = null;
+          paintAtClient(e.clientX, e.clientY);
+        } else {
           state.isRotating = true;
         }
       } else if (e.button === 1) {   // Середня кнопка — обертання (коли увімкнено режим малювання)
@@ -127,7 +268,9 @@ export const Scene = forwardRef<SceneRef, SceneProps>(
     function onPointerUp() {
       controllerState.current.isRotating = false;
       controllerState.current.isPanning = false;
-      // Reset pan accumulation when releasing right button (as per requirement)
+      // Завершуємо мазок
+      paintStateRef.current.isPainting = false;
+      paintStateRef.current.last = null;
     }
 
     function onPointerMove(e: PointerEvent) {
@@ -135,7 +278,12 @@ export const Scene = forwardRef<SceneRef, SceneProps>(
 
       const dx = e.clientX - state.lastX;
       const dy = e.clientY - state.lastY;
-    
+
+      if (paintStateRef.current.isPainting) {
+        // lastX/lastY — позиція курсора на попередньому кадрі
+        paintStroke(state.lastX, state.lastY, e.clientX, e.clientY);
+      }
+
       if (state.isRotating) {
         // Ліва кнопка: обертання навколо об'єкта — оновлюємо кути
         state.theta -= dx * 0.01;
@@ -224,11 +372,32 @@ export const Scene = forwardRef<SceneRef, SceneProps>(
         texture.wrapS = THREE.RepeatWrapping;
         texture.wrapT = THREE.RepeatWrapping;
 
+        let textureUsed = false;
+
         currentModelRef.current!.traverse((child: any) => {
           if (!child.isMesh) return;
           const materials = Array.isArray(child.material) ? child.material : [child.material];
 
           materials.forEach((mat: THREE.MeshStandardMaterial) => {
+            // Albedo для матеріалу, який уже малюється: вмальовуємо картинку в canvas,
+            // щоб не втратити можливість малювати (map лишається CanvasTexture)
+            const paintInfo = channel === 'map' ? paintCanvasesRef.current.get(mat) : undefined;
+            if (paintInfo) {
+              paintInfo.ctx.fillStyle = '#ffffff';
+              paintInfo.ctx.fillRect(0, 0, paintInfo.canvas.width, paintInfo.canvas.height);
+              try {
+                paintInfo.ctx.drawImage(
+                  texture.image as CanvasImageSource,
+                  0, 0, paintInfo.canvas.width, paintInfo.canvas.height
+                );
+              } catch (err) {
+                console.warn('Could not draw texture to canvas:', err);
+              }
+              paintInfo.texture.needsUpdate = true;
+              return;
+            }
+
+            textureUsed = true;
             const oldTexture = mat[channel];
             if (oldTexture) oldTexture.dispose(); // звільняємо стару текстуру
 
@@ -242,6 +411,7 @@ export const Scene = forwardRef<SceneRef, SceneProps>(
           });
         });
 
+        if (!textureUsed) texture.dispose();
         URL.revokeObjectURL(url);
       });
     }
@@ -257,6 +427,11 @@ export const Scene = forwardRef<SceneRef, SceneProps>(
         new GLTFLoader().parse(arrayBuffer, '', (gltf) => {
           const gltfScene = gltf.scene;
           
+          // Старі canvas для малювання належать попередній моделі — вивільняємо
+          paintCanvasesRef.current.forEach((info) => info.texture.dispose());
+          paintCanvasesRef.current.clear();
+          paintStateRef.current.last = null;
+
           // а) Якщо існує поточна модель — прибрати зі сцени та вивільнити пам'ять
           if (currentModelRef.current) {
             const oldModel = currentModelRef.current;
@@ -278,7 +453,12 @@ export const Scene = forwardRef<SceneRef, SceneProps>(
           // б) Додаємо нову модель у сцену
           sceneRef.current?.add(gltfScene);
           currentModelRef.current = gltfScene;
-          
+
+          // Якщо ми в режимі малювання — одразу готуємо canvas для нової моделі
+          if (isPaintModeRef.current) {
+            initializePaintCanvasesForModel();
+          }
+
           // в) Обчислюємо центр та розмір моделі
           const box = new THREE.Box3().setFromObject(gltfScene);
           const center = new THREE.Vector3();
@@ -352,8 +532,8 @@ export const Scene = forwardRef<SceneRef, SceneProps>(
       renderer.domElement.addEventListener('contextmenu', onContextMenu);
 
       // 4. Створення початкового куба (перша модель)
-      const geometry = new THREE.BoxGeometry(1, 1, 1);
-      const material = new THREE.MeshStandardMaterial({ 
+      const geometry = createCubeGeometry(1);
+      const material = new THREE.MeshStandardMaterial({
         color: cubeColor,
         roughness: 0.5,
         metalness: 0.1
@@ -441,13 +621,13 @@ export const Scene = forwardRef<SceneRef, SceneProps>(
       const firstMesh = findFirstMesh(currentModelRef.current);
       if (firstMesh) {
         const meshMaterial = firstMesh.material as THREE.MeshStandardMaterial | THREE.MeshStandardMaterial[];
-        if (Array.isArray(meshMaterial)) {
-          meshMaterial.forEach(m => {
-            (m as THREE.MeshStandardMaterial).color.set(cubeColor);
-          });
-        } else {
-          (meshMaterial as THREE.MeshStandardMaterial).color.set(cubeColor);
-        }
+        const materials = Array.isArray(meshMaterial) ? meshMaterial : [meshMaterial];
+        materials.forEach(m => {
+          // Після початку малювання базовий колір вже "запечений" у canvas
+          // (material.color = білий), тому тінт не застосовуємо, щоб не спотворити фарбу
+          if (paintCanvasesRef.current.has(m)) return;
+          m.color.set(cubeColor);
+        });
       }
     }, [cubeColor]);
 
@@ -457,8 +637,7 @@ export const Scene = forwardRef<SceneRef, SceneProps>(
       const firstMesh = findFirstMesh(currentModelRef.current);
       if (firstMesh) {
         firstMesh.geometry.dispose();
-        firstMesh.geometry = new THREE.BoxGeometry(cubeSize, cubeSize, cubeSize);
-        (firstMesh.material as THREE.MeshStandardMaterial).color.set(cubeColor);
+        firstMesh.geometry = createCubeGeometry(cubeSize);
       }
     }, [cubeSize]);
 
@@ -466,45 +645,41 @@ export const Scene = forwardRef<SceneRef, SceneProps>(
     function initializePaintCanvasesForModel() {
       if (!currentModelRef.current) return;
 
-      // Очищаємо старі canvas для всіх матеріалів
-      paintCanvasesRef.current.forEach((info) => {
-        info.texture.dispose();
-        info.canvas.remove();
-      });
-      paintCanvasesRef.current.clear();
-
       // Проходимо по всіх мешах у моделі
       currentModelRef.current.traverse((child: any) => {
         if (!child.isMesh) return;
 
         const materials = Array.isArray(child.material) ? child.material : [child.material];
 
-        materials.forEach((material: THREE.Material) => {
-          // Перевіряємо, чи вже є canvas для цього матеріалу
+        materials.forEach((material: THREE.MeshStandardMaterial) => {
+          // Canvas для цього матеріалу вже є — зберігаємо те, що намальовано раніше
           if (paintCanvasesRef.current.has(material)) return;
 
-          // Створюємо новий canvas 1024x1024
+          // Створюємо новий canvas
           const canvas = document.createElement('canvas');
-          canvas.width = 1024;
-          canvas.height = 1024;
+          canvas.width = PAINT_TEXTURE_SIZE;
+          canvas.height = PAINT_TEXTURE_SIZE;
           const ctx = canvas.getContext('2d');
           if (!ctx) return;
 
           // Отримуємо поточну текстуру матеріалу (map канал)
           const currentMap = material.map;
-          
-          // Очищаємо canvas базовим кольором
-          ctx.fillStyle = '#808080';
-          ctx.fillRect(0, 0, 1024, 1024);
 
-          // Якщо є поточна текстура — малюємо її на canvas
           if (currentMap && currentMap.image) {
-            const sourceImage = currentMap.image;
+            // Є текстура — беремо її за основу (material.color не чіпаємо)
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0, 0, PAINT_TEXTURE_SIZE, PAINT_TEXTURE_SIZE);
             try {
-              ctx.drawImage(sourceImage, 0, 0, 1024, 1024);
+              ctx.drawImage(currentMap.image as CanvasImageSource, 0, 0, PAINT_TEXTURE_SIZE, PAINT_TEXTURE_SIZE);
             } catch (err) {
               console.warn('Could not draw texture to canvas:', err);
             }
+          } else {
+            // Текстури немає — "запікаємо" колір матеріалу в canvas і скидаємо
+            // material.color на білий, інакше колір помножився б на фарбу вдруге
+            ctx.fillStyle = material.color ? `#${material.color.getHexString()}` : '#ffffff';
+            ctx.fillRect(0, 0, PAINT_TEXTURE_SIZE, PAINT_TEXTURE_SIZE);
+            material.color?.set(0xffffff);
           }
 
           // Створюємо CanvasTexture з canvas
@@ -531,7 +706,14 @@ export const Scene = forwardRef<SceneRef, SceneProps>(
     // Функція для перемикання режиму малювання
     function setPaintMode(enabled: boolean) {
       isPaintModeRef.current = enabled;
-      
+
+      // Перериваємо поточний мазок і міняємо курсор
+      paintStateRef.current.isPainting = false;
+      paintStateRef.current.last = null;
+      if (rendererRef.current) {
+        rendererRef.current.domElement.style.cursor = enabled ? 'crosshair' : 'default';
+      }
+
       if (enabled) {
         // При увімкненні режиму малювання — ініціалізуємо canvas для кожного матеріалу
         initializePaintCanvasesForModel();
