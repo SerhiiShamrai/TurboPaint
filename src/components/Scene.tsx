@@ -32,6 +32,10 @@ interface SceneProps {
   brushColor?: string;
   /** Радіус кисті в пікселях екрана */
   brushSize?: number;
+  /** Шари (знизу вгору) */
+  layers?: Array<{ id: string; visible: boolean }>;
+  /** Активний шар — у нього йде малювання */
+  activeLayerId?: string | null;
 }
 
 /** Відступ усередині комірки UV-атласу куба (частка комірки) — місце під padding між гранями */
@@ -103,6 +107,8 @@ export const Scene = forwardRef<SceneRef, SceneProps>(
     onModelLoad = undefined,
     brushColor = '#ff0000',
     brushSize = 24,
+    layers = [],
+    activeLayerId = null,
   }: SceneProps, ref) {
     // Рефи на DOM елементи та Three.js об'єкти
     const containerRef = useRef<HTMLDivElement>(null);
@@ -620,11 +626,16 @@ export const Scene = forwardRef<SceneRef, SceneProps>(
         materials.forEach(m => {
           // Після початку малювання базовий колір вже "запечений" у шар фарби
           // (material.color = білий), тому тінт не застосовуємо, щоб не спотворити фарбу
-          if (painterRef.current?.hasLayer(m)) return;
+          if (painterRef.current?.ownsMaterial(m)) return;
           m.color.set(cubeColor);
         });
       }
     }, [cubeColor]);
+
+    // Синхронізація шарів зі станом UI
+    useEffect(() => {
+      painterRef.current?.syncLayers(layers, activeLayerId);
+    }, [layers, activeLayerId]);
 
     // Синхронізація розміру
     useEffect(() => {
