@@ -217,6 +217,8 @@ export interface PaintRequest {
   hardness: number;
   /** Колір кисті */
   color: THREE.Color;
+  /** true — ластик: стирає фарбу активного шару замість малювання */
+  erase?: boolean;
   /** Найбільший розмір моделі (для допусків при перевірці видимості) */
   modelSize: number;
 }
@@ -267,6 +269,8 @@ export class MeshPainter {
   };
 
   private readonly stampMaterial: THREE.ShaderMaterial;
+  /** Ластик: зменшує непрозорість шару (premultiplied: dst *= 1 - a) */
+  private readonly eraseMaterial: THREE.ShaderMaterial;
   private readonly bakeMaterial: THREE.ShaderMaterial;
   private readonly dilateMaterial: THREE.ShaderMaterial;
   /** Копіювання без змішування — кладе базу в композит */
@@ -302,6 +306,22 @@ export class MeshPainter {
       blendSrc: THREE.SrcAlphaFactor,
       blendDst: THREE.OneMinusSrcAlphaFactor,
       blendSrcAlpha: THREE.OneFactor,
+      blendDstAlpha: THREE.OneMinusSrcAlphaFactor,
+    });
+
+    this.eraseMaterial = new THREE.ShaderMaterial({
+      uniforms: this.stampUniforms,
+      vertexShader: STAMP_VERT,
+      fragmentShader: STAMP_FRAG,
+      side: THREE.DoubleSide,
+      transparent: true,
+      depthTest: false,
+      depthWrite: false,
+      blending: THREE.CustomBlending,
+      blendEquation: THREE.AddEquation,
+      blendSrc: THREE.ZeroFactor,
+      blendDst: THREE.OneMinusSrcAlphaFactor,
+      blendSrcAlpha: THREE.ZeroFactor,
       blendDstAlpha: THREE.OneMinusSrcAlphaFactor,
     });
 
@@ -515,7 +535,11 @@ export class MeshPainter {
       u.uModelSize.value = req.modelSize;
       u.uColor.value.copy(req.color);
 
-      for (const mp of this.materials.values()) this.syncProxies(mp);
+      const stampMat = req.erase ? this.eraseMaterial : this.stampMaterial;
+      for (const mp of this.materials.values()) {
+        this.syncProxies(mp);
+        mp.proxies.forEach((p) => this.assignMaterial(p, stampMat));
+      }
 
       // 3. Відбитки пачками по MAX_STAMPS — один рендер на пачку для кожного матеріалу
       renderer.autoClear = false;
@@ -562,6 +586,7 @@ export class MeshPainter {
     this.scratch = null;
     this.depthTarget = null;
     this.stampMaterial.dispose();
+    this.eraseMaterial.dispose();
     this.bakeMaterial.dispose();
     this.dilateMaterial.dispose();
     this.copyReplaceMaterial.dispose();
