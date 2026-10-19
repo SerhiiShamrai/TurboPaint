@@ -134,6 +134,7 @@ export const Scene = forwardRef<SceneRef, SceneProps>(
     // Поточні налаштування кисті (ref, бо обробники подій реєструються один раз)
     const brushRef = useRef({ color: brushColor, size: brushSize, space: brushSpace, tool });
     brushRef.current = { color: brushColor, size: brushSize, space: brushSpace, tool };
+    const depthCacheRef = useRef<{ key: string; point: THREE.Vector3 } | null>(null);
     const lastPointerRef = useRef<{ x: number; y: number } | null>(null);
 
     // Стан мазка: позиції в CSS-пікселях відносно canvas
@@ -180,7 +181,7 @@ export const Scene = forwardRef<SceneRef, SceneProps>(
      * 'screen': завжди дорівнює size. 'model': радіус прив'язаний до розміру моделі
      * (при size=24 це ~16% розміру моделі), тому на екрані росте при наближенні камери.
      */
-    function getBrushRadiusCss(): number {
+    function getBrushRadiusCss(at?: { x: number; y: number }): number {
       const { size, space } = brushRef.current;
       if (space === 'screen') return size;
 
@@ -193,7 +194,25 @@ export const Scene = forwardRef<SceneRef, SceneProps>(
       const dim = box.getSize(new THREE.Vector3());
       const modelSize = Math.max(dim.x, dim.y, dim.z, 1e-6);
       camera.updateMatrixWorld();
-      const depth = -box.getCenter(new THREE.Vector3()).applyMatrix4(camera.matrixWorldInverse).z;
+      // Глибина поверхні під курсором (перспектива: ближче до камери — більше пікселів на одиницю).
+      // Якщо під курсором нічого немає, беремо глибину центру моделі.
+      let point = box.getCenter(new THREE.Vector3());
+      if (at) {
+        const key = `${at.x.toFixed(1)},${at.y.toFixed(1)},${camera.matrixWorld.elements.join(',')}`;
+        const cache = depthCacheRef.current;
+        if (cache && cache.key === key) {
+          point = cache.point;
+        } else {
+          const rect = dom.getBoundingClientRect();
+          const ndc = new THREE.Vector2((at.x / rect.width) * 2 - 1, -(at.y / rect.height) * 2 + 1);
+          const raycaster = new THREE.Raycaster();
+          raycaster.setFromCamera(ndc, camera);
+          const hit = raycaster.intersectObject(model, true)[0];
+          if (hit) point = hit.point;
+          depthCacheRef.current = { key, point: point.clone() };
+        }
+      }
+      const depth = -point.clone().applyMatrix4(camera.matrixWorldInverse).z;
       if (depth <= camera.near) return size;
 
       const viewHeight = dom.getBoundingClientRect().height;
@@ -222,7 +241,7 @@ export const Scene = forwardRef<SceneRef, SceneProps>(
         camera,
         // У WebGL початок координат — лівий нижній кут
         points: points.map((p) => ({ x: p.x * scaleX, y: (rect.height - p.y) * scaleY })),
-        radiusPx: getBrushRadiusCss() * scaleX,
+        radiusPx: getBrushRadiusCss(points[points.length - 1]) * scaleX,
         hardness: BRUSH_HARDNESS,
         color: new THREE.Color(brushRef.current.color),
         erase: brushRef.current.tool === 'eraser',
@@ -250,7 +269,7 @@ export const Scene = forwardRef<SceneRef, SceneProps>(
         return;
       }
 
-      const diameter = getBrushRadiusCss() * 2;
+      const diameter = getBrushRadiusCss({ x, y }) * 2;
       el.style.display = 'block';
       el.style.width = `${diameter}px`;
       el.style.height = `${diameter}px`;
@@ -309,7 +328,7 @@ export const Scene = forwardRef<SceneRef, SceneProps>(
           const y = e.clientY - rect.top;
 
           // Відбитки лягають з постійним кроком уздовж траєкторії курсора
-          const spacing = Math.max(1, getBrushRadiusCss() * BRUSH_SPACING);
+          const spacing = Math.max(1, getBrushRadiusCss({ x: stroke.lastX, y: stroke.lastY }) * BRUSH_SPACING);
           const points: Array<{ x: number; y: number }> = [];
           let dist = Math.hypot(x - stroke.lastX, y - stroke.lastY);
           while (dist >= spacing && points.length < 400) {
