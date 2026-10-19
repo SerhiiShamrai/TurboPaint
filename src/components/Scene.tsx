@@ -34,6 +34,8 @@ interface SceneProps {
   brushSize?: number;
   /** Шари (знизу вгору) */
   layers?: Array<{ id: string; visible: boolean }>;
+  /** Простір розміру кисті: 'screen' — пікселі екрана, 'model' — частка розміру моделі */
+  brushSpace?: 'screen' | 'model';
   /** Активний шар — у нього йде малювання */
   activeLayerId?: string | null;
 }
@@ -108,6 +110,7 @@ export const Scene = forwardRef<SceneRef, SceneProps>(
     brushColor = '#ff0000',
     brushSize = 24,
     layers = [],
+    brushSpace = 'screen',
     activeLayerId = null,
   }: SceneProps, ref) {
     // Рефи на DOM елементи та Three.js об'єкти
@@ -126,8 +129,9 @@ export const Scene = forwardRef<SceneRef, SceneProps>(
     const painterRef = useRef<MeshPainter | null>(null);
 
     // Поточні налаштування кисті (ref, бо обробники подій реєструються один раз)
-    const brushRef = useRef({ color: brushColor, size: brushSize });
-    brushRef.current = { color: brushColor, size: brushSize };
+    const brushRef = useRef({ color: brushColor, size: brushSize, space: brushSpace });
+    brushRef.current = { color: brushColor, size: brushSize, space: brushSpace };
+    const lastPointerRef = useRef<{ x: number; y: number } | null>(null);
 
     // Стан мазка: позиції в CSS-пікселях відносно canvas
     const strokeRef = useRef({ active: false, lastX: 0, lastY: 0, modelSize: 1 });
@@ -169,6 +173,33 @@ export const Scene = forwardRef<SceneRef, SceneProps>(
     }
 
     /**
+     * Радіус кисті в CSS-пікселях екрана.
+     * 'screen': завжди дорівнює size. 'model': радіус прив'язаний до розміру моделі
+     * (при size=24 це ~16% розміру моделі), тому на екрані росте при наближенні камери.
+     */
+    function getBrushRadiusCss(): number {
+      const { size, space } = brushRef.current;
+      if (space === 'screen') return size;
+
+      const camera = cameraRef.current;
+      const dom = rendererRef.current?.domElement;
+      const model = currentModelRef.current;
+      if (!camera || !dom || !model) return size;
+
+      const box = new THREE.Box3().setFromObject(model);
+      const dim = box.getSize(new THREE.Vector3());
+      const modelSize = Math.max(dim.x, dim.y, dim.z, 1e-6);
+      camera.updateMatrixWorld();
+      const depth = -box.getCenter(new THREE.Vector3()).applyMatrix4(camera.matrixWorldInverse).z;
+      if (depth <= camera.near) return size;
+
+      const viewHeight = dom.getBoundingClientRect().height;
+      const pxPerUnit = viewHeight / (2 * depth * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)));
+      const worldRadius = (size / 150) * modelSize;
+      return Math.max(1, worldRadius * pxPerUnit);
+    }
+
+    /**
      * Відмальовує відбитки кисті в заданих точках (CSS-пікселі відносно canvas).
      * Мазок проєктується з екрана на всі видимі поверхні моделі.
      */
@@ -188,7 +219,7 @@ export const Scene = forwardRef<SceneRef, SceneProps>(
         camera,
         // У WebGL початок координат — лівий нижній кут
         points: points.map((p) => ({ x: p.x * scaleX, y: (rect.height - p.y) * scaleY })),
-        radiusPx: brushRef.current.size * scaleX,
+        radiusPx: getBrushRadiusCss() * scaleX,
         hardness: BRUSH_HARDNESS,
         color: new THREE.Color(brushRef.current.color),
         modelSize: strokeRef.current.modelSize,
@@ -215,7 +246,7 @@ export const Scene = forwardRef<SceneRef, SceneProps>(
         return;
       }
 
-      const diameter = brushRef.current.size * 2;
+      const diameter = getBrushRadiusCss() * 2;
       el.style.display = 'block';
       el.style.width = `${diameter}px`;
       el.style.height = `${diameter}px`;
@@ -274,7 +305,7 @@ export const Scene = forwardRef<SceneRef, SceneProps>(
           const y = e.clientY - rect.top;
 
           // Відбитки лягають з постійним кроком уздовж траєкторії курсора
-          const spacing = Math.max(1, brushRef.current.size * BRUSH_SPACING);
+          const spacing = Math.max(1, getBrushRadiusCss() * BRUSH_SPACING);
           const points: Array<{ x: number; y: number }> = [];
           let dist = Math.hypot(x - stroke.lastX, y - stroke.lastY);
           while (dist >= spacing && points.length < 400) {
@@ -288,6 +319,7 @@ export const Scene = forwardRef<SceneRef, SceneProps>(
         }
       }
 
+      lastPointerRef.current = { x: e.clientX, y: e.clientY };
       updateBrushCursor(e.clientX, e.clientY);
 
       if (state.isRotating) {
@@ -561,6 +593,10 @@ export const Scene = forwardRef<SceneRef, SceneProps>(
 
         // Дозаповнюємо краї UV-острівців у шарах, що змінились (padding проти швів)
         painterRef.current?.flush();
+        // У режимі "розмір на моделі" кільце змінюється при зумі, навіть коли миша нерухома
+        if (brushRef.current.space === 'model' && lastPointerRef.current) {
+          updateBrushCursor(lastPointerRef.current.x, lastPointerRef.current.y);
+        }
 
         if (sceneRef.current && cameraRef.current) {
           renderer.render(sceneRef.current, cameraRef.current);

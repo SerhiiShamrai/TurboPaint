@@ -20,6 +20,9 @@ interface SidebarProps {
   brushColor?: string;
   /** Радіус кисті в пікселях текстури */
   brushSize?: number;
+  /** Простір розміру кисті: екран або модель */
+  brushSpace?: 'screen' | 'model';
+  onBrushSpaceChange?: (space: 'screen' | 'model') => void;
   /** Callback при зміні кольору кисті */
   onBrushColorChange?: (color: string) => void;
   /** Callback при зміні розміру кисті */
@@ -47,6 +50,8 @@ function Sidebar({
   paintMode,
   brushColor = '#ff0000',
   brushSize = 24,
+  brushSpace = 'screen',
+  onBrushSpaceChange,
   onBrushColorChange,
   onBrushSizeChange,
   onColorChange,
@@ -114,9 +119,27 @@ function Sidebar({
             />
           </div>
 
+          {/* Простір розміру кисті */}
+          <div className="mb-3">
+            <label className="text-gray-300 text-xs block mb-1">Розмір кисті прив'язаний до:</label>
+            <div className="flex gap-1">
+              {([['screen', 'Екрана'], ['model', 'Моделі']] as const).map(([value, label]) => (
+                <button
+                  key={value}
+                  onClick={() => onBrushSpaceChange?.(value)}
+                  className={`flex-1 text-xs py-1 rounded ${
+                    brushSpace === value ? 'bg-purple-600 text-white' : 'bg-gray-600 text-gray-300 hover:bg-gray-500'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+
           {/* Розмір кисті */}
           <div>
-            <label className="text-gray-300 text-xs block mb-1">Розмір кисті: {brushSize} px</label>
+            <label className="text-gray-300 text-xs block mb-1">Розмір кисті: {brushSize}{brushSpace === 'screen' ? ' px' : ''}</label>
             <input
               type="range"
               min="2"
