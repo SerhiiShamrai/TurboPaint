@@ -20,6 +20,9 @@ interface SidebarProps {
   brushColor?: string;
   /** Радіус кисті в пікселях текстури */
   brushSize?: number;
+  /** Активний інструмент */
+  tool?: 'brush' | 'eraser';
+  onToolChange?: (tool: 'brush' | 'eraser') => void;
   /** Простір розміру кисті: екран або модель */
   brushSpace?: 'screen' | 'model';
   onBrushSpaceChange?: (space: 'screen' | 'model') => void;
@@ -51,6 +54,8 @@ function Sidebar({
   brushColor = '#ff0000',
   brushSize = 24,
   brushSpace = 'screen',
+  tool = 'brush',
+  onToolChange,
   onBrushSpaceChange,
   onBrushColorChange,
   onBrushSizeChange,
@@ -106,9 +111,23 @@ function Sidebar({
       {/* Налаштування кисті (лише в режимі малювання) */}
       {paintMode && (
         <div className="bg-gray-700 rounded-lg p-3">
-          <h3 className="text-white font-semibold mb-2 text-sm">Кисть:</h3>
+          <h3 className="text-white font-semibold mb-2 text-sm">Інструмент:</h3>
+          <div className="flex gap-1 mb-3">
+            {([['brush', '🖌 Кисть'], ['eraser', '🧽 Ластик']] as const).map(([value, label]) => (
+              <button
+                key={value}
+                onClick={() => onToolChange?.(value)}
+                className={`flex-1 text-xs py-1 rounded ${
+                  tool === value ? 'bg-purple-600 text-white' : 'bg-gray-600 text-gray-300 hover:bg-gray-500'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
 
-          {/* Колір кисті */}
+          {/* Колір кисті (ластику колір не потрібен) */}
+          {tool === 'brush' && (
           <div className="mb-3">
             <label className="text-gray-300 text-xs block mb-1">Колір кисті:</label>
             <input
@@ -118,6 +137,7 @@ function Sidebar({
               className="w-full h-8 rounded cursor-pointer"
             />
           </div>
+          )}
 
           {/* Простір розміру кисті */}
           <div className="mb-3">
@@ -139,7 +159,7 @@ function Sidebar({
 
           {/* Розмір кисті */}
           <div>
-            <label className="text-gray-300 text-xs block mb-1">Розмір кисті: {brushSize}{brushSpace === 'screen' ? ' px' : ''}</label>
+            <label className="text-gray-300 text-xs block mb-1">{tool === 'eraser' ? 'Розмір ластика' : 'Розмір кисті'}: {brushSize}{brushSpace === 'screen' ? ' px' : ''}</label>
             <input
               type="range"
               min="2"

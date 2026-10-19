@@ -36,6 +36,8 @@ interface SceneProps {
   layers?: Array<{ id: string; visible: boolean }>;
   /** Простір розміру кисті: 'screen' — пікселі екрана, 'model' — частка розміру моделі */
   brushSpace?: 'screen' | 'model';
+  /** Активний інструмент малювання */
+  tool?: 'brush' | 'eraser';
   /** Активний шар — у нього йде малювання */
   activeLayerId?: string | null;
 }
@@ -111,6 +113,7 @@ export const Scene = forwardRef<SceneRef, SceneProps>(
     brushSize = 24,
     layers = [],
     brushSpace = 'screen',
+    tool = 'brush',
     activeLayerId = null,
   }: SceneProps, ref) {
     // Рефи на DOM елементи та Three.js об'єкти
@@ -129,8 +132,8 @@ export const Scene = forwardRef<SceneRef, SceneProps>(
     const painterRef = useRef<MeshPainter | null>(null);
 
     // Поточні налаштування кисті (ref, бо обробники подій реєструються один раз)
-    const brushRef = useRef({ color: brushColor, size: brushSize, space: brushSpace });
-    brushRef.current = { color: brushColor, size: brushSize, space: brushSpace };
+    const brushRef = useRef({ color: brushColor, size: brushSize, space: brushSpace, tool });
+    brushRef.current = { color: brushColor, size: brushSize, space: brushSpace, tool };
     const lastPointerRef = useRef<{ x: number; y: number } | null>(null);
 
     // Стан мазка: позиції в CSS-пікселях відносно canvas
@@ -222,6 +225,7 @@ export const Scene = forwardRef<SceneRef, SceneProps>(
         radiusPx: getBrushRadiusCss() * scaleX,
         hardness: BRUSH_HARDNESS,
         color: new THREE.Color(brushRef.current.color),
+        erase: brushRef.current.tool === 'eraser',
         modelSize: strokeRef.current.modelSize,
       });
     }
@@ -738,7 +742,7 @@ export const Scene = forwardRef<SceneRef, SceneProps>(
           className="pointer-events-none absolute z-10 rounded-full"
           style={{
             display: 'none',
-            border: '1px solid rgba(255,255,255,0.9)',
+            border: tool === 'eraser' ? '1px dashed rgba(255,255,255,0.95)' : '1px solid rgba(255,255,255,0.9)',
             boxShadow: '0 0 0 1px rgba(0,0,0,0.6)',
           }}
         />

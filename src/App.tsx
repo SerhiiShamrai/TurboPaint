@@ -10,6 +10,7 @@ function App() {
   const [paintMode, setPaintMode] = useState(false);
   const [brushColor, setBrushColor] = useState('#ff0000');
   const [brushSize, setBrushSize] = useState(24);
+  const [tool, setTool] = useState<'brush' | 'eraser'>('brush');
   const [brushSpace, setBrushSpace] = useState<'screen' | 'model'>('screen');
   // Одразу є один шар "Малювання", щоб можна було малювати без зайвих кроків
   const [layers, setLayers] = useState<Layer[]>(() => [createLayer('paint', [])]);
@@ -44,6 +45,8 @@ function App() {
           paintMode={paintMode}
           brushColor={brushColor}
           brushSize={brushSize}
+          tool={tool}
+          onToolChange={setTool}
           brushSpace={brushSpace}
           onBrushSpaceChange={setBrushSpace}
           onBrushColorChange={setBrushColor}
@@ -67,6 +70,7 @@ function App() {
           brushColor={brushColor}
           brushSize={brushSize}
           brushSpace={brushSpace}
+          tool={tool}
           layers={layers}
           activeLayerId={activeId}
         />
