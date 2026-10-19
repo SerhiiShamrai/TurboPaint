@@ -566,7 +566,7 @@ export class MeshPainter {
 
   /**
    * Віддає готові текстури (база + видимі шари з padding) у вигляді пікселів RGBA,
-   * рядки зверху вниз, sRGB. Поза UV-острівцями (і padding) alpha = 0.
+   * перший рядок = v 0 (як у glTF), sRGB. Поза UV-острівцями (і padding) alpha = 0.
    */
   exportAlbedo(): Array<{ name: string; width: number; height: number; data: Uint8ClampedArray }> {
     this.flush();
@@ -585,11 +585,12 @@ export class MeshPainter {
       const buffer = new Uint8Array(width * height * 4);
       this.renderer.readRenderTargetPixels(mp.composite, 0, 0, width, height, buffer);
 
-      // WebGL читає знизу вгору — перевертаємо рядки; padding (alpha 0.5) робимо непрозорим
+      // Рядки НЕ перевертаємо: у glTF (як і в нашому UV-просторі) перший рядок картинки — це v = 0,
+      // а readRenderTargetPixels теж починає з v = 0. Padding (alpha 0.5) робимо непрозорим.
       const data = new Uint8ClampedArray(width * height * 4);
       const rowSize = width * 4;
       for (let y = 0; y < height; y++) {
-        const src = (height - 1 - y) * rowSize;
+        const src = y * rowSize;
         const dst = y * rowSize;
         for (let x = 0; x < rowSize; x += 4) {
           data[dst + x] = buffer[src + x];
