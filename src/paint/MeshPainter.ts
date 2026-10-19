@@ -604,6 +604,78 @@ export class MeshPainter {
     return result;
   }
 
+  /**
+   * Знімає повний стан фарби для збереження проєкту: сирі байти RGBA кожної текстури
+   * (як вони лежать у відеопам'яті, без втрат; рядок 0 = v 0). Порядок матеріалів
+   * стабільний для тієї самої моделі.
+   */
+  serialize(): Array<{ name: string; base: Uint8Array; layers: Record<string, Uint8Array> }> {
+    const read = (target: THREE.WebGLRenderTarget): Uint8Array => {
+      const buffer = new Uint8Array(target.width * target.height * 4);
+      this.renderer.readRenderTargetPixels(target, 0, 0, target.width, target.height, buffer);
+      return buffer;
+    };
+    const result: Array<{ name: string; base: Uint8Array; layers: Record<string, Uint8Array> }> = [];
+    for (const mp of this.materials.values()) {
+      const layers: Record<string, Uint8Array> = {};
+      for (const [id, target] of mp.layers) layers[id] = read(target);
+      result.push({ name: mp.material.name ?? '', base: read(mp.base), layers });
+    }
+    return result;
+  }
+
+  /**
+   * Відновлює фарбу з serialize(). Викликати після prepare() моделі та syncLayers().
+   * Матеріали зіставляються за порядком; зайві дані ігноруються.
+   */
+  deserialize(data: Array<{ base: Uint8Array; layers: Record<string, Uint8Array> }>): void {
+    const mps = [...this.materials.values()];
+    const known = new Set(this.layerOrder.map((l) => l.id));
+
+    mps.forEach((mp, i) => {
+      const item = data[i];
+      if (!item) return;
+      this.uploadToTarget(mp.base, item.base);
+      for (const [id, bytes] of Object.entries(item.layers)) {
+        if (!known.has(id)) continue;
+        let target = mp.layers.get(id);
+        if (!target) {
+          target = this.createTarget(false);
+          mp.layers.set(id, target);
+        }
+        this.uploadToTarget(target, bytes);
+      }
+      mp.dirty = true;
+    });
+    this.flush();
+  }
+
+  /** Точно копіює байти RGBA у render target (без змішування) */
+  private uploadToTarget(target: THREE.WebGLRenderTarget, bytes: Uint8Array): void {
+    if (bytes.length !== target.width * target.height * 4) return;
+    const texture = new THREE.DataTexture(
+      bytes,
+      target.width,
+      target.height,
+      THREE.RGBAFormat,
+      THREE.UnsignedByteType
+    );
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.minFilter = THREE.NearestFilter;
+    texture.magFilter = THREE.NearestFilter;
+    texture.generateMipmaps = false;
+    texture.needsUpdate = true;
+
+    this.withRenderState(() => {
+      this.renderer.autoClear = false;
+      this.fsMesh.material = this.copyReplaceMaterial;
+      this.copyUniforms.uTex.value = texture;
+      this.renderer.setRenderTarget(target);
+      this.renderer.render(this.fsScene, this.fsCamera);
+    });
+    texture.dispose();
+  }
+
   /** Прибирає фарбу всіх матеріалів (наприклад, при завантаженні нової моделі). Список шарів лишається. */
   reset(): void {
     for (const mp of this.materials.values()) {

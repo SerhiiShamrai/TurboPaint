@@ -1,8 +1,9 @@
 import { useState, useRef } from 'react';
-import { Scene } from './components/Scene';
+import { Scene, type SceneRef } from './components/Scene';
 import Sidebar from './components/Sidebar';
 import LayersPanel from './components/LayersPanel';
-import { saveFiles } from './saveFiles';
+import { saveBlob, saveFiles } from './saveFiles';
+import { packProject, unpackProject } from './project';
 import { createLayer, type Layer, type LayerType } from './layers';
 
 function App() {
@@ -17,16 +18,46 @@ function App() {
   const [layers, setLayers] = useState<Layer[]>(() => [createLayer('paint', [])]);
   const [activeLayerId, setActiveLayerId] = useState<string | null>(() => null);
   const activeId = activeLayerId ?? layers[layers.length - 1]?.id ?? null;
-  const sceneRef = useRef<{
-    loadModelFromFile: (file: File) => void;
-    applyTextureToChannel: (channel: 'map' | 'roughnessMap' | 'metalnessMap' | 'normalMap' | 'emissiveMap', file: File) => void;
-    setPaintMode: (enabled: boolean) => void;
-    exportAlbedo: () => Promise<Array<{ name: string; blob: Blob }>>;
-  }>(null);
+  const sceneRef = useRef<SceneRef>(null);
 
   const exportTextures = async () => {
     const files = await sceneRef.current?.exportAlbedo();
     if (files && files.length > 0) await saveFiles(files, 'textures.zip');
+  };
+
+  const saveProject = async () => {
+    const snapshot = await sceneRef.current?.exportProject();
+    if (!snapshot) return;
+    const blob = packProject(snapshot, {
+      cubeColor,
+      cubeSize,
+      layers,
+      activeLayerId: activeId,
+      brush: { color: brushColor, size: brushSize, space: brushSpace, tool },
+    });
+    await saveBlob(blob, 'project.tpaint', 'Проєкт TurboPainter', 'application/octet-stream');
+  };
+
+  const openProject = async (file: File) => {
+    try {
+      const { snapshot, settings } = unpackProject(await file.arrayBuffer());
+      await sceneRef.current?.importProject(snapshot, {
+        cubeColor: settings.cubeColor,
+        cubeSize: settings.cubeSize,
+        layers: settings.layers,
+        activeLayerId: settings.activeLayerId,
+      });
+      setCubeColor(settings.cubeColor);
+      setCubeSize(settings.cubeSize);
+      setLayers(settings.layers);
+      setActiveLayerId(settings.activeLayerId);
+      setBrushColor(settings.brush.color);
+      setBrushSize(settings.brush.size);
+      setBrushSpace(settings.brush.space);
+      setTool(settings.brush.tool);
+    } catch (e) {
+      alert(`Не вдалося відкрити проєкт: ${e instanceof Error ? e.message : 'невідома помилка'}`);
+    }
   };
 
   const addLayer = (type: LayerType) => {
@@ -57,6 +88,8 @@ function App() {
           brushSpace={brushSpace}
           onBrushSpaceChange={setBrushSpace}
           onExportTextures={exportTextures}
+          onSaveProject={saveProject}
+          onOpenProject={openProject}
           onBrushColorChange={setBrushColor}
           onBrushSizeChange={setBrushSize}
           onColorChange={setCubeColor}

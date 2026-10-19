@@ -24,37 +24,18 @@ function downloadBlob(blob: Blob, name: string): void {
 }
 
 /**
- * Зберігає файли на комп'ютер користувача: один файл — як є, кілька — одним .zip.
+ * Зберігає один файл на комп'ютер користувача.
  * У Chrome/Edge відкривається вікно "Зберегти як" (можна вибрати папку),
  * в інших браузерах файл потрапляє у "Завантаження".
  */
-export async function saveFiles(files: OutputFile[], zipName: string): Promise<void> {
-  if (files.length === 0) return;
-
-  let blob: Blob;
-  let name: string;
-  let mime: string;
-  if (files.length === 1) {
-    blob = files[0].blob;
-    name = files[0].name;
-    mime = 'image/png';
-  } else {
-    const entries: Record<string, Uint8Array> = {};
-    for (const f of files) entries[f.name] = new Uint8Array(await f.blob.arrayBuffer());
-    // PNG уже стиснуті, тому zip без додаткового стиснення (level 0)
-    const zipped = zipSync(entries, { level: 0 });
-    blob = new Blob([zipped as BlobPart], { type: 'application/zip' });
-    name = zipName;
-    mime = 'application/zip';
-  }
-
+export async function saveBlob(blob: Blob, name: string, description: string, mime: string): Promise<void> {
   const picker = (window as unknown as FilePickerWindow).showSaveFilePicker;
   if (picker) {
     try {
       const ext = name.slice(name.lastIndexOf('.'));
       const handle = await picker.call(window, {
         suggestedName: name,
-        types: [{ description: mime === 'application/zip' ? 'ZIP' : 'PNG', accept: { [mime]: [ext] } }],
+        types: [{ description, accept: { [mime]: [ext] } }],
       });
       const writable = await handle.createWritable();
       await writable.write(blob);
@@ -66,4 +47,18 @@ export async function saveFiles(files: OutputFile[], zipName: string): Promise<v
     }
   }
   downloadBlob(blob, name);
+}
+
+/** Зберігає файли: один — як є, кілька — одним .zip. */
+export async function saveFiles(files: OutputFile[], zipName: string): Promise<void> {
+  if (files.length === 0) return;
+  if (files.length === 1) {
+    await saveBlob(files[0].blob, files[0].name, 'PNG', 'image/png');
+    return;
+  }
+  const entries: Record<string, Uint8Array> = {};
+  for (const f of files) entries[f.name] = new Uint8Array(await f.blob.arrayBuffer());
+  // PNG уже стиснуті, тому zip без додаткового стиснення (level 0)
+  const zipped = zipSync(entries, { level: 0 });
+  await saveBlob(new Blob([zipped as BlobPart], { type: 'application/zip' }), zipName, 'ZIP', 'application/zip');
 }

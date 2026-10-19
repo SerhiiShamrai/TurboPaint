@@ -2,6 +2,7 @@ import { forwardRef, useImperativeHandle, useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { MeshPainter } from '../paint/MeshPainter';
+import type { ProjectSnapshot } from '../project';
 
 /**
  * TurboPainter MVP - 3D сцена з кубом
@@ -95,12 +96,19 @@ function findFirstMesh(root: THREE.Object3D): THREE.Mesh | null {
 
 type MaterialChannel = 'map' | 'roughnessMap' | 'metalnessMap' | 'normalMap' | 'emissiveMap';
 
-interface SceneRef {
+export interface SceneRef {
   loadModelFromFile: (file: File) => void;
   applyTextureToChannel: (channel: MaterialChannel, file: File) => void;
   setPaintMode: (enabled: boolean) => void;
   /** Готові текстури Albedo (по одній на матеріал) у вигляді PNG */
   exportAlbedo: () => Promise<Array<{ name: string; blob: Blob }>>;
+  /** Знімок моделі та фарби для збереження проєкту */
+  exportProject: () => Promise<ProjectSnapshot>;
+  /** Відновлює модель і фарбу зі знімка */
+  importProject: (
+    snapshot: ProjectSnapshot,
+    opts: { cubeColor: number; cubeSize: number; layers: Array<{ id: string; visible: boolean }>; activeLayerId: string | null }
+  ) => Promise<void>;
 }
 
 export const Scene = forwardRef<SceneRef, SceneProps>(
@@ -138,6 +146,8 @@ export const Scene = forwardRef<SceneRef, SceneProps>(
     brushRef.current = { color: brushColor, size: brushSize, space: brushSpace, tool };
     const depthCacheRef = useRef<{ key: string; point: THREE.Vector3 } | null>(null);
     const lastPointerRef = useRef<{ x: number; y: number } | null>(null);
+    // Байти завантаженої моделі (для збереження проєкту); null — стартовий куб
+    const customModelRef = useRef<{ name: string; buffer: ArrayBuffer } | null>(null);
 
     // Стан мазка: позиції в CSS-пікселях відносно canvas
     const strokeRef = useRef({ active: false, lastX: 0, lastY: 0, modelSize: 1 });
@@ -468,12 +478,16 @@ export const Scene = forwardRef<SceneRef, SceneProps>(
     }
 
     // Функція завантаження моделі з файлу
-    function loadModelFromFile(file: File) {
+    function loadModelFromFile(file: File): Promise<void> {
+      return new Promise<void>((resolve, reject) => {
       const reader = new FileReader();
 
       reader.onload = (e) => {
         const arrayBuffer = e.target?.result as ArrayBuffer;
-        if (!arrayBuffer) return;
+        if (!arrayBuffer) {
+          reject(new Error('empty file'));
+          return;
+        }
 
         new GLTFLoader().parse(arrayBuffer, '', (gltf) => {
           const gltfScene = gltf.scene;
@@ -536,12 +550,49 @@ export const Scene = forwardRef<SceneRef, SceneProps>(
 
           // Позначаємо, що це кастомна модель
           isCustomModelRef.current = true;
+          customModelRef.current = { name: file.name, buffer: arrayBuffer.slice(0) };
+          resolve();
         }, (err) => {
           console.error('Error loading GLTF model:', err);
+          reject(err instanceof Error ? err : new Error('GLTF parse error'));
         });
       };
+      reader.onerror = () => reject(new Error('read error'));
 
       reader.readAsArrayBuffer(file);
+      });
+    }
+
+    /** Повертає стартовий куб замість завантаженої моделі */
+    function restoreDefaultCube(size: number, color: number) {
+      painterRef.current?.reset();
+      strokeRef.current.active = false;
+      const old = currentModelRef.current;
+      if (old) {
+        sceneRef.current?.remove(old);
+        old.traverse((child: any) => {
+          if (child.isMesh) {
+            child.geometry?.dispose();
+            if (Array.isArray(child.material)) child.material.forEach((m: THREE.Material) => m.dispose());
+            else child.material?.dispose();
+          }
+        });
+      }
+      const mesh = new THREE.Mesh(
+        createCubeGeometry(size),
+        new THREE.MeshStandardMaterial({ color, roughness: 0.5, metalness: 0.1 })
+      );
+      sceneRef.current?.add(mesh);
+      currentModelRef.current = mesh;
+      isCustomModelRef.current = false;
+      customModelRef.current = null;
+
+      const state = controllerState.current;
+      state.target.set(0, 0, 0);
+      state.minRadius = 2;
+      state.maxRadius = 20;
+      state.radius = 6;
+      updateCameraFromOrbit();
     }
 
     // --- Ініціалізація сцени ---
@@ -747,11 +798,42 @@ export const Scene = forwardRef<SceneRef, SceneProps>(
       return files;
     }
 
+    async function exportProject(): Promise<ProjectSnapshot> {
+      const painter = painterRef.current;
+      if (painter && currentModelRef.current) painter.prepare(currentModelRef.current);
+      const materials = painter ? painter.serialize() : [];
+      const custom = customModelRef.current;
+      return {
+        model: custom ? { kind: 'file', name: custom.name, buffer: custom.buffer } : { kind: 'cube' },
+        materials,
+      };
+    }
+
+    async function importProject(
+      snapshot: ProjectSnapshot,
+      opts: { cubeColor: number; cubeSize: number; layers: Array<{ id: string; visible: boolean }>; activeLayerId: string | null }
+    ): Promise<void> {
+      const painter = painterRef.current;
+      if (!painter) return;
+
+      if (snapshot.model.kind === 'file') {
+        await loadModelFromFile(new File([snapshot.model.buffer], snapshot.model.name));
+      } else {
+        restoreDefaultCube(opts.cubeSize, opts.cubeColor);
+      }
+
+      if (currentModelRef.current) painter.prepare(currentModelRef.current);
+      painter.syncLayers(opts.layers, opts.activeLayerId);
+      painter.deserialize(snapshot.materials);
+    }
+
     useImperativeHandle(ref, () => ({
       loadModelFromFile,
       applyTextureToChannel,
       setPaintMode,
-      exportAlbedo
+      exportAlbedo,
+      exportProject,
+      importProject
     }));
 
     // --- Return JSX ---

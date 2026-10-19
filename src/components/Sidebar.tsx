@@ -22,6 +22,10 @@ interface SidebarProps {
   brushSize?: number;
   /** Зберегти намальовані текстури на комп'ютер */
   onExportTextures?: () => void;
+  /** Зберегти проєкт у файл */
+  onSaveProject?: () => void;
+  /** Відкрити проєкт із файлу */
+  onOpenProject?: (file: File) => void;
   /** Активний інструмент */
   tool?: 'brush' | 'eraser';
   onToolChange?: (tool: 'brush' | 'eraser') => void;
@@ -59,6 +63,8 @@ function Sidebar({
   tool = 'brush',
   onToolChange,
   onExportTextures,
+  onSaveProject,
+  onOpenProject,
   onBrushSpaceChange,
   onBrushColorChange,
   onBrushSizeChange,
@@ -90,6 +96,36 @@ function Sidebar({
       >
         {paintMode ? '🔄 Режим огляду' : '🖌 Режим малювання'}
       </button>
+
+      {/* Проєкт: зберегти / відкрити */}
+      <div className="bg-gray-700 rounded-lg p-3">
+        <h3 className="text-white font-semibold mb-2 text-sm">Проєкт:</h3>
+        <div className="flex gap-1">
+          <button
+            onClick={() => onSaveProject?.()}
+            className="flex-1 bg-sky-600 hover:bg-sky-700 text-white text-xs font-semibold py-2 rounded"
+          >
+            💾 Зберегти
+          </button>
+          <label
+            htmlFor="project-file-input"
+            className="flex-1 bg-gray-600 hover:bg-gray-500 text-white text-xs font-semibold py-2 rounded text-center cursor-pointer"
+          >
+            📂 Відкрити
+          </label>
+          <input
+            id="project-file-input"
+            type="file"
+            accept=".tpaint"
+            className="hidden"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) onOpenProject?.(file);
+              e.target.value = '';
+            }}
+          />
+        </div>
+      </div>
 
       {/* Збереження текстури */}
       <button
