@@ -564,6 +564,45 @@ export class MeshPainter {
     }
   }
 
+  /**
+   * Віддає готові текстури (база + видимі шари з padding) у вигляді пікселів RGBA,
+   * рядки зверху вниз, sRGB. Поза UV-острівцями (і padding) alpha = 0.
+   */
+  exportAlbedo(): Array<{ name: string; width: number; height: number; data: Uint8ClampedArray }> {
+    this.flush();
+    const result: Array<{ name: string; width: number; height: number; data: Uint8ClampedArray }> = [];
+    const used = new Set<string>();
+    let index = 0;
+
+    for (const mp of this.materials.values()) {
+      index += 1;
+      const raw = mp.material.name?.trim() || `material_${index}`;
+      let name = raw.replace(/[^\p{L}\p{N}_-]+/gu, '_');
+      while (used.has(name)) name += '_';
+      used.add(name);
+
+      const { width, height } = mp.composite;
+      const buffer = new Uint8Array(width * height * 4);
+      this.renderer.readRenderTargetPixels(mp.composite, 0, 0, width, height, buffer);
+
+      // WebGL читає знизу вгору — перевертаємо рядки; padding (alpha 0.5) робимо непрозорим
+      const data = new Uint8ClampedArray(width * height * 4);
+      const rowSize = width * 4;
+      for (let y = 0; y < height; y++) {
+        const src = (height - 1 - y) * rowSize;
+        const dst = y * rowSize;
+        for (let x = 0; x < rowSize; x += 4) {
+          data[dst + x] = buffer[src + x];
+          data[dst + x + 1] = buffer[src + x + 1];
+          data[dst + x + 2] = buffer[src + x + 2];
+          data[dst + x + 3] = buffer[src + x + 3] > 0 ? 255 : 0;
+        }
+      }
+      result.push({ name, width, height, data });
+    }
+    return result;
+  }
+
   /** Прибирає фарбу всіх матеріалів (наприклад, при завантаженні нової моделі). Список шарів лишається. */
   reset(): void {
     for (const mp of this.materials.values()) {

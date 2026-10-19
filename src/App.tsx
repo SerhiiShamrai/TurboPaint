@@ -2,6 +2,7 @@ import { useState, useRef } from 'react';
 import { Scene } from './components/Scene';
 import Sidebar from './components/Sidebar';
 import LayersPanel from './components/LayersPanel';
+import { saveFiles } from './saveFiles';
 import { createLayer, type Layer, type LayerType } from './layers';
 
 function App() {
@@ -20,7 +21,13 @@ function App() {
     loadModelFromFile: (file: File) => void;
     applyTextureToChannel: (channel: 'map' | 'roughnessMap' | 'metalnessMap' | 'normalMap' | 'emissiveMap', file: File) => void;
     setPaintMode: (enabled: boolean) => void;
+    exportAlbedo: () => Promise<Array<{ name: string; blob: Blob }>>;
   }>(null);
+
+  const exportTextures = async () => {
+    const files = await sceneRef.current?.exportAlbedo();
+    if (files && files.length > 0) await saveFiles(files, 'textures.zip');
+  };
 
   const addLayer = (type: LayerType) => {
     const layer = createLayer(type, layers);
@@ -49,6 +56,7 @@ function App() {
           onToolChange={setTool}
           brushSpace={brushSpace}
           onBrushSpaceChange={setBrushSpace}
+          onExportTextures={exportTextures}
           onBrushColorChange={setBrushColor}
           onBrushSizeChange={setBrushSize}
           onColorChange={setCubeColor}

@@ -20,6 +20,8 @@ interface SidebarProps {
   brushColor?: string;
   /** Радіус кисті в пікселях текстури */
   brushSize?: number;
+  /** Зберегти намальовані текстури на комп'ютер */
+  onExportTextures?: () => void;
   /** Активний інструмент */
   tool?: 'brush' | 'eraser';
   onToolChange?: (tool: 'brush' | 'eraser') => void;
@@ -56,6 +58,7 @@ function Sidebar({
   brushSpace = 'screen',
   tool = 'brush',
   onToolChange,
+  onExportTextures,
   onBrushSpaceChange,
   onBrushColorChange,
   onBrushSizeChange,
@@ -86,6 +89,14 @@ function Sidebar({
         }`}
       >
         {paintMode ? '🔄 Режим огляду' : '🖌 Режим малювання'}
+      </button>
+
+      {/* Збереження текстури */}
+      <button
+        onClick={() => onExportTextures?.()}
+        className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-semibold py-2 px-4 rounded transition-colors"
+      >
+        💾 Зберегти текстуру (PNG)
       </button>
 
       {/* Інструкція */}
