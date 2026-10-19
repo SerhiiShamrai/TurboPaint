@@ -99,6 +99,8 @@ interface SceneRef {
   loadModelFromFile: (file: File) => void;
   applyTextureToChannel: (channel: MaterialChannel, file: File) => void;
   setPaintMode: (enabled: boolean) => void;
+  /** Готові текстури Albedo (по одній на матеріал) у вигляді PNG */
+  exportAlbedo: () => Promise<Array<{ name: string; blob: Blob }>>;
 }
 
 export const Scene = forwardRef<SceneRef, SceneProps>(
@@ -725,10 +727,31 @@ export const Scene = forwardRef<SceneRef, SceneProps>(
       }
     }
 
+    async function exportAlbedo(): Promise<Array<{ name: string; blob: Blob }>> {
+      const painter = painterRef.current;
+      if (!painter) return [];
+      // Якщо малювання ще не вмикали, готуємо модель (запікаємо базу) — тоді експорт теж працює
+      if (currentModelRef.current) painter.prepare(currentModelRef.current);
+
+      const files: Array<{ name: string; blob: Blob }> = [];
+      for (const tex of painter.exportAlbedo()) {
+        const canvas = document.createElement('canvas');
+        canvas.width = tex.width;
+        canvas.height = tex.height;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) continue;
+        ctx.putImageData(new ImageData(tex.data, tex.width, tex.height), 0, 0);
+        const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
+        if (blob) files.push({ name: `${tex.name}_albedo.png`, blob });
+      }
+      return files;
+    }
+
     useImperativeHandle(ref, () => ({
       loadModelFromFile,
       applyTextureToChannel,
-      setPaintMode
+      setPaintMode,
+      exportAlbedo
     }));
 
     // --- Return JSX ---
